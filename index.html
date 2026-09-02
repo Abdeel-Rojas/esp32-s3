@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagrama Interactivo v009 - Desplazamiento Activo</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;700&display=swap');
+        
+        :root {
+            --panel-bg: #1a1b26;
+            --text-main: #a9b1d6;
+            --text-muted: #565f89;
+            --accent: #7aa2f7; 
+            --border-color: #24283b;
+        }
+        body { margin: 0; padding: 0; font-family: 'Sora', sans-serif; color: var(--text-main); display: flex; height: 100vh; overflow: hidden; background-color: #f4f6f9; }
+        
+        #svg-container { 
+            flex: 1; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden; 
+            background-color: #f4f6f9; 
+            padding: 30px;
+        }
+        
+        #diagram-svg { 
+            display: block;
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.05); /* Desplazamiento GPU fluido */
+        }
+        
+        .panel-open #diagram-svg {
+            transform: translateX(-180px); /* Mueve el SVG exactamente el espacio necesario para liberar la derecha */
+        }
+        
+        text { font-family: 'Sora', sans-serif !important; pointer-events: none; }
+
+        .interactive-node {
+            transition: transform 0.15s ease, filter 0.15s ease;
+            transform-box: fill-box;
+            transform-origin: center;
+            cursor: pointer;
+            pointer-events: all;
+        }
+        .interactive-node:hover {
+            transform: scale(1.045);
+            filter: drop-shadow(0 8px 24px rgba(255, 179, 71, 0.5)) drop-shadow(0 0 4px rgba(255, 179, 71, 1));
+        }
+        .interactive-node:active { transform: scale(0.99); }
+        .interactive-node:hover rect { stroke: #ffb347; stroke-width: 8px; }
+
+        .interactive-edge { transition: stroke-width 0.15s, filter 0.15s, transform 0.15s; }
+        .interactive-edge.hover-active { 
+            stroke-width: 18px; 
+            filter: drop-shadow(0 0 12px rgba(255, 179, 71, 0.9)); 
+        }
+        rect.interactive-edge.hover-active {
+            stroke: #ffb347; 
+            stroke-width: 8px;
+            transform-box: fill-box;
+            transform-origin: center;
+            transform: scale(1.045);
+            filter: drop-shadow(0 8px 24px rgba(255, 179, 71, 0.5)) drop-shadow(0 0 4px rgba(255, 179, 71, 1));
+        }
+
+        #info-panel { 
+            position: absolute;
+            right: 0;
+            top: 0;
+            height: 100%;
+            width: 380px; 
+            background-color: var(--panel-bg); 
+            border-left: 1px solid var(--border-color); 
+            display: flex; 
+            flex-direction: column; 
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+            z-index: 10; 
+            box-shadow: -5px 0 15px rgba(0,0,0,0.5); 
+        }
+        #info-panel.closed { transform: translateX(100%); }
+        #toggle-btn { position: absolute; left: -30px; top: 50%; transform: translateY(-50%); width: 30px; height: 100px; background-color: var(--panel-bg); border: 1px solid var(--border-color); border-right: none; border-radius: 8px 0 0 8px; color: var(--text-main); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: -2px 0 5px rgba(0,0,0,0.2); writing-mode: vertical-rl; text-orientation: mixed; font-weight: bold; letter-spacing: 2px; }
+        #toggle-btn:hover { background-color: #24283b; color: var(--accent); }
+        .panel-header { padding: 20px; border-bottom: 1px solid var(--border-color); }
+        .panel-header h1 { margin: 0; font-size: 1.2rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
+        .panel-header p { margin: 5px 0 0 0; font-size: 0.9rem; color: var(--text-muted); }
+        .panel-content { padding: 25px 20px; overflow-y: auto; flex: 1; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-bottom: 15px; margin-right: 5px; text-transform: uppercase; }
+        .badge-info { background: rgba(122, 162, 247, 0.2); color: var(--accent); border: 1px solid var(--accent); }
+        .badge-warning { background: rgba(255, 179, 71, 0.2); color: #ffb347; border: 1px solid #ffb347; }
+        .badge-danger { background: rgba(247, 118, 142, 0.2); color: #f7768e; border: 1px solid #f7768e; }
+        .info-prop { margin-bottom: 15px; padding: 18px; background: #24283b; border-radius: 8px; font-size: 0.95rem; line-height: 1.6; }
+        .info-prop strong { color: var(--accent); }
+        .rich-desc { font-size: 0.95rem; line-height: 1.5; color: #c0caf5; font-weight: 400; background: rgba(122, 162, 247, 0.05); padding: 15px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; margin-bottom: 15px; }
+</style>
+</head>
+<body>
+    <div id="svg-container">
+        <svg xmlns="http://www.w3.org/2000/svg" id="diagram-svg" data-name="TINKER like" viewBox="-50 0 5400 3800" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <style>
+      .az {
+        letter-spacing: 0em;
+      }
+
+      .ba {
+        stroke: #7aa2f7;
+      }
+
+      .ba, .bb, .bc, .bd, .be, .bf, .bg, .bh {
+        fill: none;
+        stroke-miterlimit: 10;
+        stroke-width: 8px;
+      }
+
+      .bi {
+        fill: #565f89;
+      }
+
+      .bb {
+        stroke: #7dcfff;
+      }
+
+      .bj {
+        fill: #f7768e;
+      }
+
+      .bc {
+        stroke: #f7768e;
+      }
+
+      .bd {
+        stroke: #bb9af7;
+      }
+
+      .be {
+        stroke: #565f89;
+      }
+
+      .bk {
+        font-size: 107.86px;
+      }
+
+      .bk, .bl {
+        font-family: Sora-Bold, Sora;
+        font-variation-settings: 'wght' 700;
+        font-weight: 700;
+      }
+
+      .bk, .bl, .bm {
+        fill: #fff;
+      }
+
+      .bn {
+        fill: #9ecd6a;
+      }
+
+      .bo {
+        fill: #7dcfff;
+      }
+
+      .bp {
+        fill: #e0af67;
+      }
+
+      .bq {
+        fill: #7aa2f7;
+      }
+
+      .bf {
+        stroke: #414868;
+      }
+
+      .bl {
+        font-size: 56.24px;
+      }
+
+      .br {
+        letter-spacing: 0em;
+      }
+
+      .bs {
+        fill: #414868;
+      }
+
+      .bg {
+        stroke: #9ecd6a;
+      }
+
+      .bt {
+        letter-spacing: 0em;
+      }
+
+      .bu {
+        fill: #bb9af7;
+      }
+
+      .bv {
+        letter-spacing: 0em;
+      }
+
+      .bw {
+        letter-spacing: 0em;
+      }
+
+      .bh {
+        stroke: #e0af67;
+      }
+
+      .bx {
+        font-family: Sora-Regular, Sora;
+        font-size: 296.44px;
+        font-variation-settings: 'wght' 400;
+      }
+
+      .by {
+        letter-spacing: -.06em;
+      }
+
+      .bz {
+        letter-spacing: -.06em;
+      }
+
+      .ca {
+        letter-spacing: -.02em;
+      }
+
+      .cb {
+        letter-spacing: -.03em;
+      }
+
+      .cc {
+        letter-spacing: -.03em;
+      }
+
+      .cd {
+        letter-spacing: -.02em;
+      }
+
+      .ce {
+        letter-spacing: -.02em;
+      }
+
+      .cf {
+        letter-spacing: -.02em;
+      }
+
+      .cg {
+        letter-spacing: -.01em;
+      }
+
+      .ch {
+        letter-spacing: -.02em;
+      }
+
+      .ci {
+        letter-spacing: -.05em;
+      }
+
+      .cj {
+        letter-spacing: -.03em;
+      }
+
+      .ck {
+        letter-spacing: 0em;
+      }
+
+      .cl {
+        letter-spacing: 0em;
+      }
+
+      .cm {
+        letter-spacing: 0em;
+      }
+
+      .cn {
+        letter-spacing: -.01em;
+      }
+
+      .co {
+        letter-spacing: 0em;
+      }
+
+      .cp {
+        letter-spacing: 0em;
+      }
+
+      .cq {
+        letter-spacing: 0em;
+      }
+
+      .cr {
+        letter-spacing: 0em;
+      }
+
+      .cs {
+        letter-spacing: 0em;
+      }
+
+      .ct {
+        letter-spacing: 0em;
+      }
+    </style>
+  </defs>
+  <g>
+    <g>
+      <g id="ESP32" class="interactive-node"><rect x="3055.87" y="1555.54" width="746.94" height="746.94" rx="148.62" ry="148.62" />
+      <text class="bk" transform="translate(3148.43 1904.41)"><tspan class="ck" x="0" y="0">E</tspan><tspan x="63.53" y="0">SP32</tspan><tspan class="cp" x="343.63" y="0">-</tspan><tspan x="397.67" y="0">S3</tspan><tspan class="cn" x="31.87" y="129.43">W</tspan><tspan x="146.09" y="129.43">ifi + </tspan><tspan class="ch" x="366.23" y="129.43">B</tspan><tspan class="bw" x="439.14" y="129.43">T</tspan></text>
+    </g></g>
+    <g>
+      <circle class="bn" cx="3662.06" cy="1477.95" r="23.54" />
+      <circle class="bs" cx="3880.4" cy="1894.12" r="23.54" />
+      <circle class="bn" cx="3800.44" cy="2363.29" r="23.54" />
+      <circle class="bn" cx="3376.64" cy="1477.95" r="23.54" />
+      <circle class="bq" cx="3879.35" cy="1608.76" r="23.54" />
+      <circle class="bn" cx="3880.4" cy="2108.13" r="23.54" />
+      <circle class="bn" cx="3519.32" cy="1477.95" r="23.54" />
+      <circle class="bq" cx="3880.4" cy="1751.44" r="23.54" />
+      <circle class="bn" cx="3879.15" cy="2250.84" r="23.54" />
+      <circle class="bq" cx="3233.96" cy="1477.95" r="23.54" />
+      <circle class="bn" cx="3801.86" cy="1495.47" r="23.54" />
+      <circle class="bo" cx="3880.4" cy="1965.44" r="23.54" />
+      <circle class="bi" cx="3232.33" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="2978.28" cy="1999.53" r="23.54" />
+      <circle class="bp" cx="3091.55" cy="1482.18" r="23.54" />
+      <circle class="bn" cx="3517.71" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="2987.78" cy="2283.84" r="23.54" />
+      <circle class="bp" cx="2978.28" cy="1714.14" r="23.54" />
+      <circle class="bi" cx="3375.03" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="2978.28" cy="2142.26" r="23.54" />
+      <circle class="bu" cx="2988.36" cy="1572.68" r="23.54" />
+      <circle class="bi" cx="3660.45" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="3089.99" cy="2375.44" r="23.54" />
+      <circle class="bu" cx="2978.28" cy="1856.87" r="23.54" />
+      <circle class="bn" cx="3590.68" cy="1477.95" r="23.54" />
+      <circle class="bj" cx="3880.4" cy="1822.78" r="23.54" />
+      <circle class="bn" cx="3853.53" cy="2316.69" r="23.54" />
+      <circle class="bq" cx="3305.31" cy="1477.95" r="23.54" />
+      <circle class="bq" cx="3854.45" cy="1542.63" r="23.54" />
+      <circle class="bo" cx="3880.4" cy="2036.85" r="23.54" />
+      <circle class="bn" cx="3447.98" cy="1477.95" r="23.54" />
+      <circle class="bq" cx="3880.4" cy="1680.05" r="23.54" />
+      <circle class="bn" cx="3880.4" cy="2179.57" r="23.54" />
+      <circle class="bq" cx="3162.55" cy="1477.95" r="23.54" />
+      <circle class="bn" cx="3733.36" cy="1477.95" r="23.54" />
+      <circle class="bi" cx="3303.69" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="2978.28" cy="2070.88" r="23.54" />
+      <circle class="bu" cx="3028.9" cy="1514.84" r="23.54" />
+      <circle class="bi" cx="3589.07" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="3027.7" cy="2342.11" r="23.54" />
+      <circle class="bu" cx="2978.28" cy="1785.52" r="23.54" />
+      <circle class="bi" cx="3446.36" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="2978.28" cy="2213.64" r="23.54" />
+      <circle class="bp" cx="2978.28" cy="1642.78" r="23.54" />
+      <circle class="bn" cx="3731.78" cy="2380.06" r="23.54" />
+      <circle class="bi" cx="3160.95" cy="2380.06" r="23.54" />
+      <circle class="bu" cx="2978.28" cy="1928.25" r="23.54" />
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="Mem_Node" class="interactive-node"><rect x="2598.18" y="3268.48" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(2739.22 3492.5)"><tspan x="0" y="0">F</tspan><tspan class="ct" x="31.49" y="0">L</tspan><tspan class="cm" x="63.21" y="0">A</tspan><tspan x="106.97" y="0">SH</tspan><tspan x="-43.61" y="67.49">E</tspan><tspan class="br" x="-10.21" y="67.49">X</tspan><tspan x="30.51" y="67.49">TERNA</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="b" data-name="GPIO-37" class="be interactive-edge" points="3446.36 2380.06 3051.25 2687.91 3051.25 3212.85" data-cable-id="GPIO-37" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="b" data-name="GPIO-37" class="interactive-edge-hit" points="3446.36 2380.06 3051.25 2687.91 3051.25 3212.85" data-cable-id="GPIO-37" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="c" data-name="GPIO-36" class="be interactive-edge" points="3375.03 2380.06 3011.33 2660.32 3011.33 3212.85" data-cable-id="GPIO-36" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="c" data-name="GPIO-36" class="interactive-edge-hit" points="3375.03 2380.06 3011.33 2660.32 3011.33 3212.85" data-cable-id="GPIO-36" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="d" data-name="GPIO-35" class="be interactive-edge" points="3303.69 2380.06 2971.32 2623.74 2971.32 3212.85" data-cable-id="GPIO-35" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="d" data-name="GPIO-35" class="interactive-edge-hit" points="3303.69 2380.06 2971.32 2623.74 2971.32 3212.85" data-cable-id="GPIO-35" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="e" data-name="GPIO-34" class="be interactive-edge" points="3232.33 2380.06 2933.75 2598.78 2933.75 3212.85" data-cable-id="GPIO-34" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="e" data-name="GPIO-34" class="interactive-edge-hit" points="3232.33 2380.06 2933.75 2598.78 2933.75 3212.85" data-cable-id="GPIO-34" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="f" data-name="GPIO-33" class="be interactive-edge" points="3160.95 2380.06 2897.32 2579.42 2897.32 3212.85" data-cable-id="GPIO-33" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="f" data-name="GPIO-33" class="interactive-edge-hit" points="3160.95 2380.06 2897.32 2579.42 2897.32 3212.85" data-cable-id="GPIO-33" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="g" data-name="GPIO-32" class="be interactive-edge" points="3089.99 2375.44 2864.56 2544.99 2864.56 3212.85" data-cable-id="GPIO-32" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="g" data-name="GPIO-32" class="interactive-edge-hit" points="3089.99 2375.44 2864.56 2544.99 2864.56 3212.85" data-cable-id="GPIO-32" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="h" data-name="GPIO-31" class="be interactive-edge" points="3027.7 2342.11 2831.84 2497.07 2831.84 3212.85" data-cable-id="GPIO-31" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="h" data-name="GPIO-31" class="interactive-edge-hit" points="3027.7 2342.11 2831.84 2497.07 2831.84 3212.85" data-cable-id="GPIO-31" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="i" data-name="GPIO-30" class="be interactive-edge" points="2987.78 2283.84 2794.84 2440.18 2794.84 3212.85" data-cable-id="GPIO-30" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="i" data-name="GPIO-30" class="interactive-edge-hit" points="2987.78 2283.84 2794.84 2440.18 2794.84 3212.85" data-cable-id="GPIO-30" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="j" data-name="GPIO-29" class="be interactive-edge" points="2978.28 2213.64 2756.55 2395.91 2756.55 3212.85" data-cable-id="GPIO-29" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="j" data-name="GPIO-29" class="interactive-edge-hit" points="2978.28 2213.64 2756.55 2395.91 2756.55 3212.85" data-cable-id="GPIO-29" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="k" data-name="GPIO-28" class="be interactive-edge" points="2978.28 2142.26 2716.25 2372.98 2716.25 3212.85" data-cable-id="GPIO-28" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="k" data-name="GPIO-28" class="interactive-edge-hit" points="2978.28 2142.26 2716.25 2372.98 2716.25 3212.85" data-cable-id="GPIO-28" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="l" data-name="GPIO-27" class="be interactive-edge" points="2978.28 2070.88 2669.1 2349.36 2669.1 3212.85" data-cable-id="GPIO-27" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="l" data-name="GPIO-27" class="interactive-edge-hit" points="2978.28 2070.88 2669.1 2349.36 2669.1 3212.85" data-cable-id="GPIO-27" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="m" data-name="GPIO-26" class="be interactive-edge" points="2978.28 1999.53 2623.25 2329.57 2623.25 3212.85" data-cable-id="GPIO-26" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="m" data-name="GPIO-26" class="interactive-edge-hit" points="2978.28 1999.53 2623.25 2329.57 2623.25 3212.85" data-cable-id="GPIO-26" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bi" x="2598.3" y="3135.37" width="475.31" height="77.74" rx="21.95" ry="21.95" />
+        <g>
+          <path class="bm" d="M2680.2,3158.43c-2.06-.96-4.53-1.44-7.41-1.44h-12.41v34.21h7.62v-9.71h4.79c2.88,0,5.35-.48,7.41-1.44,2.06-.96,3.64-2.33,4.74-4.11,1.1-1.78,1.65-3.88,1.65-6.3v-.74c0-2.45-.55-4.56-1.65-6.34-1.1-1.78-2.68-3.15-4.74-4.11ZM2678.16,3172.22c-.45.85-1.1,1.51-1.95,1.98-.85.46-1.87.7-3.04.7h-5.16v-11.29h5.16c1.18,0,2.19.23,3.04.7.85.46,1.5,1.12,1.95,1.97.45.85.67,1.85.67,3s-.23,2.1-.67,2.95Z" />
+          <rect class="bm" x="2691.47" y="3157.27" width="7.62" height="33.93" />
+          <polygon class="bm" points="2732.75 3185.02 2732.1 3185.02 2719.31 3157.27 2706.81 3157.27 2706.81 3191.2 2713.88 3191.2 2713.88 3163.45 2714.53 3163.45 2727.31 3191.2 2739.9 3191.2 2739.9 3157.27 2732.75 3157.27 2732.75 3185.02" />
+          <polygon class="bm" points="2754.96 3177.12 2767.79 3177.12 2767.79 3170.8 2754.96 3170.8 2754.96 3163.59 2768.54 3163.59 2768.54 3157.27 2754.96 3157.27 2754.03 3157.27 2747.53 3157.27 2747.53 3191.2 2754.03 3191.2 2754.96 3191.2 2768.86 3191.2 2768.86 3184.88 2754.96 3184.88 2754.96 3177.12" />
+          <path class="bm" d="M2794.61,3172.4c-1.89-.85-4.08-1.39-6.55-1.6l-2.6-.23c-1.55-.12-2.67-.54-3.35-1.25s-1.02-1.53-1.02-2.46c0-.78.19-1.48.56-2.12s.94-1.13,1.7-1.49c.76-.36,1.7-.53,2.81-.53,1.18,0,2.16.21,2.95.63s1.39.98,1.79,1.67.6,1.46.6,2.3h7.44c0-2.2-.51-4.13-1.53-5.79s-2.49-2.95-4.39-3.88-4.19-1.39-6.86-1.39-4.74.43-6.6,1.28c-1.86.85-3.31,2.07-4.35,3.65-1.04,1.58-1.56,3.47-1.56,5.67,0,3.01,1.01,5.41,3.02,7.23s4.71,2.88,8.09,3.18l2.56.19c2.08.19,3.58.6,4.51,1.23.93.64,1.39,1.5,1.39,2.58,0,.87-.25,1.63-.74,2.3-.5.67-1.22,1.19-2.18,1.56-.96.37-2.15.56-3.58.56-1.58,0-2.87-.22-3.86-.67-.99-.45-1.73-1.05-2.21-1.79-.48-.74-.72-1.55-.72-2.42h-7.44c0,2.2.55,4.14,1.65,5.83s2.7,3.03,4.81,4.02c2.11.99,4.69,1.49,7.76,1.49,2.88,0,5.36-.45,7.44-1.35,2.08-.9,3.68-2.17,4.81-3.81,1.13-1.64,1.7-3.55,1.7-5.72s-.53-3.9-1.6-5.37c-1.07-1.47-2.55-2.63-4.44-3.49Z" />
+          <path class="bm" d="M2822.03,3183.86c0-.74.19-1.33.58-1.77.39-.43,1.05-.85,1.98-1.25l5.44-2.37c2.97-1.3,5.17-2.8,6.6-4.49,1.42-1.69,2.14-3.83,2.14-6.44v-.56c0-2.01-.47-3.83-1.42-5.44s-2.32-2.9-4.14-3.86c-1.81-.96-4.07-1.44-6.76-1.44s-5,.5-6.81,1.49-3.18,2.35-4.11,4.07c-.93,1.72-1.39,3.66-1.39,5.83h7.39c0-1.55.42-2.77,1.25-3.67.84-.9,2.06-1.35,3.67-1.35s2.8.43,3.65,1.3c.85.87,1.28,1.98,1.28,3.35s-.34,2.43-1.02,3.3c-.68.87-1.7,1.6-3.07,2.18l-5.48,2.37c-1.74.74-3.14,1.54-4.21,2.39-1.07.85-1.84,1.82-2.32,2.91-.48,1.08-.72,2.35-.72,3.81v6.97h24.26v-6.55h-16.78v-.79Z" />
+          <path class="bm" d="M2866,3169.94c-1.74-.94-3.8-1.42-6.18-1.42-2.11,0-3.97.39-5.58,1.16-1.45.7-2.6,1.73-3.48,3.06.11-1.71.38-3.19.83-4.43.59-1.63,1.6-2.85,3.02-3.67,1.42-.82,3.38-1.23,5.86-1.23,1.24,0,2.45.03,3.62.09,1.18.06,2.28.16,3.3.28v-6.41c-1.05-.12-2.14-.22-3.25-.28-1.12-.06-2.25-.09-3.39-.09-5.64,0-9.89,1.43-12.76,4.3-2.87,2.87-4.3,7.12-4.3,12.76v1.95c0,2.23.26,4.33.79,6.3.53,1.97,1.36,3.7,2.51,5.18,1.15,1.49,2.62,2.65,4.42,3.49,1.8.84,3.95,1.25,6.46,1.25,2.73,0,5.1-.51,7.13-1.53,2.03-1.02,3.6-2.46,4.72-4.3,1.12-1.84,1.67-3.99,1.67-6.44s-.46-4.34-1.39-6.04-2.26-3.03-4-3.97ZM2863.28,3183.09c-.51.85-1.24,1.53-2.18,2.02-.95.5-2.1.74-3.46.74s-2.57-.25-3.53-.74c-.96-.5-1.68-1.18-2.16-2.04s-.72-1.86-.72-2.97c0-1.3.29-2.37.88-3.21.59-.84,1.39-1.47,2.39-1.91,1.01-.43,2.11-.65,3.32-.65,1.3,0,2.42.24,3.35.72s1.64,1.15,2.14,2c.5.85.74,1.87.74,3.04s-.26,2.15-.77,3Z" />
+          <path class="bm" d="M2894.68,3157.27l-11.2,33.93h7.62l2.69-8.41h14.17l2.76,8.41h7.9l-11.62-33.93h-12.32ZM2895.81,3176.47l4.13-12.92h1.7l4.24,12.92h-10.07Z" />
+          <polygon class="bm" points="2930.65 3157.27 2923.03 3157.27 2923.03 3191.2 2929.72 3191.2 2930.65 3191.2 2943.95 3191.2 2943.95 3184.51 2930.65 3184.51 2930.65 3157.27" />
+          <path class="bm" d="M2976.2,3171.54c-1.4-.64-3-1.04-4.81-1.21l9.36-5.95v-7.11h-22.87v6.55h13.62l.42.74-10.27,6.69,3.44,5.81c.5-.4,1.09-.74,1.79-1,.7-.26,1.51-.4,2.44-.4,1.7,0,3.04.47,4,1.42.96.95,1.44,2.16,1.44,3.65,0,.96-.22,1.82-.65,2.58-.43.76-1.06,1.36-1.88,1.79-.82.43-1.79.65-2.91.65-1.74,0-3.08-.44-4.04-1.32-.96-.88-1.44-2.04-1.44-3.46h-7.39c0,2.11.52,4,1.56,5.67,1.04,1.67,2.53,3.01,4.46,4s4.22,1.49,6.86,1.49,4.95-.48,6.86-1.44c1.91-.96,3.38-2.26,4.42-3.9s1.56-3.5,1.56-5.58v-.56c0-2.08-.52-3.9-1.56-5.46-1.04-1.56-2.5-2.78-4.39-3.65Z" />
+          <polygon class="bm" points="2992.01 3157.27 2985.82 3157.27 2985.82 3163.55 2985.82 3168.98 2992.01 3168.98 2992.01 3163.55 3002.32 3163.55 3002.83 3164.24 2990.94 3191.2 2999.02 3191.2 3011.53 3162.11 3011.53 3157.27 2992.01 3157.27" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="System_Node" class="interactive-node"><rect x="3191.69" y="3268.62" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(3339.39 3459.37)"><tspan x="0" y="0">PIN</tspan><tspan class="cl" x="105.45" y="0">E</tspan><tspan x="138.57" y="0">S</tspan><tspan x="-95.89" y="67.49">ARRANQUE/</tspan><tspan x="-12.29" y="134.97">LIBR</tspan><tspan class="cl" x="117.73" y="134.97">E</tspan><tspan x="150.86" y="134.97">S</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="n" data-name="GPIO-3" class="be interactive-edge" points="3589.07 2380.06 3371.51 2563.79 3371.51 3212.85" data-cable-id="GPIO-3" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="n" data-name="GPIO-3" class="interactive-edge-hit" points="3589.07 2380.06 3371.51 2563.79 3371.51 3212.85" data-cable-id="GPIO-3" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="o" data-name="GPIO-1" class="be interactive-edge" points="3660.45 2380.06 3480.38 2547.12 3480.38 3212.85" data-cable-id="GPIO-1" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="o" data-name="GPIO-1" class="interactive-edge-hit" points="3660.45 2380.06 3480.38 2547.12 3480.38 3212.85" data-cable-id="GPIO-1" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="p" data-name="GPIO-48" class="bg interactive-edge" points="3517.71 2380.06 3277.03 2579.5 3277.03 3212.85" data-cable-id="GPIO-48" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="p" data-name="GPIO-48" class="interactive-edge-hit" points="3517.71 2380.06 3277.03 2579.5 3277.03 3212.85" data-cable-id="GPIO-48" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="q" data-name="GPIO-0" class="bg interactive-edge" points="3731.78 2380.06 3568.61 2547.12 3568.61 3212.85" data-cable-id="GPIO-0" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="q" data-name="GPIO-0" class="interactive-edge-hit" points="3731.78 2380.06 3568.61 2547.12 3568.61 3212.85" data-cable-id="GPIO-0" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bi" x="3191.69" y="3135.37" width="475.31" height="77.74" rx="21.95" ry="21.95" />
+        <g>
+          <polygon class="bm" points="3347.28 3166.78 3340.22 3166.78 3340.22 3178.68 3330.88 3178.68 3330.23 3177.7 3341.24 3160.18 3335.34 3156.32 3322.47 3176.77 3322.47 3184.72 3340.22 3184.72 3340.22 3191.23 3347.28 3191.23 3347.28 3184.72 3351.19 3184.72 3351.19 3178.68 3347.28 3178.68 3347.28 3166.78" />
+          <path class="bm" d="M3378.57,3175.19c-.87-.77-1.88-1.36-3.02-1.77v-.65c.9-.37,1.7-.88,2.42-1.51.71-.63,1.26-1.42,1.65-2.35.39-.93.58-2.01.58-3.25,0-2.11-.54-3.84-1.63-5.21-1.08-1.36-2.57-2.39-4.46-3.09-1.89-.7-4.04-1.04-6.46-1.04s-4.49.35-6.41,1.04c-1.92.7-3.42,1.73-4.51,3.09s-1.63,3.1-1.63,5.21c0,1.24.2,2.32.6,3.25.4.93.96,1.71,1.67,2.35.71.64,1.5,1.14,2.37,1.51v.65c-1.15.4-2.15.99-3,1.77-.85.77-1.51,1.71-1.98,2.81-.46,1.1-.7,2.38-.7,3.83,0,2.2.57,4.08,1.7,5.62,1.13,1.55,2.71,2.73,4.74,3.53s4.41,1.21,7.13,1.21,5.15-.4,7.18-1.21,3.61-1.98,4.74-3.53c1.13-1.55,1.7-3.42,1.7-5.62,0-1.46-.23-2.73-.7-3.83-.46-1.1-1.13-2.04-2-2.81ZM3363.83,3163.57c.93-.65,2.2-.98,3.81-.98s2.88.32,3.81.95c.93.64,1.39,1.6,1.39,2.91s-.46,2.19-1.39,2.86c-.93.67-2.2,1-3.81,1s-2.84-.33-3.79-1c-.95-.67-1.42-1.62-1.42-2.86s.46-2.23,1.39-2.88ZM3373.1,3183.67c-.51.76-1.23,1.33-2.16,1.7-.93.37-2.03.56-3.3.56s-2.33-.19-3.28-.56c-.95-.37-1.67-.94-2.16-1.7-.5-.76-.74-1.68-.74-2.77s.25-1.99.74-2.72c.5-.73,1.22-1.28,2.16-1.65.94-.37,2.04-.56,3.28-.56s2.38.19,3.32.56,1.67.92,2.16,1.65c.5.73.74,1.63.74,2.72s-.26,2.01-.77,2.77Z" />
+          <rect class="bm" x="3385.17" y="3174.77" width="19.61" height="6.65" />
+          <path class="bm" d="M3428.11,3171.56c-1.4-.64-3-1.04-4.81-1.21l9.36-5.95v-7.11h-22.87v6.55h13.62l.42.74-10.27,6.69,3.44,5.81c.5-.4,1.09-.74,1.79-1,.7-.26,1.51-.4,2.44-.4,1.7,0,3.04.47,4,1.42.96.95,1.44,2.16,1.44,3.65,0,.96-.22,1.82-.65,2.58-.43.76-1.06,1.36-1.88,1.79-.82.43-1.79.65-2.91.65-1.74,0-3.08-.44-4.04-1.32-.96-.88-1.44-2.04-1.44-3.46h-7.39c0,2.11.52,4,1.56,5.67,1.04,1.67,2.53,3.01,4.46,4s4.22,1.49,6.86,1.49,4.95-.48,6.86-1.44c1.91-.96,3.38-2.26,4.42-3.9s1.56-3.5,1.56-5.58v-.56c0-2.08-.52-3.9-1.56-5.46-1.04-1.56-2.5-2.78-4.39-3.65Z" />
+          <rect class="bm" x="3438.2" y="3174.77" width="19.61" height="6.65" />
+          <polygon class="bm" points="3461.39 3163.9 3467.99 3163.9 3467.99 3191.23 3475.61 3191.23 3475.61 3157.3 3461.39 3157.3 3461.39 3163.9" />
+          <rect class="bm" x="3481.75" y="3174.77" width="19.61" height="6.65" />
+          <path class="bm" d="M3534.59,3164.5c-1.08-2.51-2.74-4.51-4.95-6-2.22-1.49-5.04-2.23-8.48-2.23s-6.27.74-8.51,2.23c-2.23,1.49-3.89,3.49-4.97,6-1.08,2.51-1.63,5.31-1.63,8.41v2.7c0,2.2.28,4.3.84,6.3.56,2,1.44,3.77,2.65,5.3,1.21,1.53,2.77,2.74,4.69,3.62,1.92.88,4.23,1.33,6.92,1.33s5-.44,6.9-1.33,3.46-2.09,4.65-3.62c1.19-1.53,2.08-3.3,2.65-5.3.57-2,.86-4.1.86-6.3v-2.7c0-3.1-.54-5.9-1.63-8.41ZM3526.74,3182.47c-1.21,1.75-3.07,2.62-5.58,2.62s-4.42-.88-5.65-2.65c-1.22-1.77-1.84-4.51-1.84-8.23s.62-6.62,1.86-8.32c1.24-1.7,3.11-2.56,5.62-2.56s4.29.85,5.53,2.56c1.24,1.71,1.86,4.51,1.86,8.41,0,3.69-.6,6.41-1.81,8.16Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="Debug_Node" class="interactive-node"><rect x="3785.19" y="3268.48" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(3834.53 3526.72)"><tspan class="cb" x="0" y="0">U</tspan><tspan x="42.07" y="0">A</tspan><tspan class="cd" x="86.05" y="0">R</tspan><tspan x="125.92" y="0">T + J</tspan><tspan class="by" x="253.97" y="0">T</tspan><tspan class="cj" x="285.07" y="0">A</tspan><tspan x="327.31" y="0">G</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="r" data-name="GPIO-39" class="bg interactive-edge" points="3800.44 2363.29 3890.17 2456.37 3890.17 3212.85" data-cable-id="GPIO-39" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="r" data-name="GPIO-39" class="interactive-edge-hit" points="3800.44 2363.29 3890.17 2456.37 3890.17 3212.85" data-cable-id="GPIO-39" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="s" data-name="GPIO-40" class="bg interactive-edge" points="3853.53 2316.69 3948.47 2424.13 3948.47 3212.85" data-cable-id="GPIO-40" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="s" data-name="GPIO-40" class="interactive-edge-hit" points="3853.53 2316.69 3948.47 2424.13 3948.47 3212.85" data-cable-id="GPIO-40" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="t" data-name="GPIO-41" class="bg interactive-edge" points="3879.15 2250.84 4018.39 2401.16 4018.39 3212.85" data-cable-id="GPIO-41" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="t" data-name="GPIO-41" class="interactive-edge-hit" points="3879.15 2250.84 4018.39 2401.16 4018.39 3212.85" data-cable-id="GPIO-41" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="u" data-name="GPIO-43" class="bg interactive-edge" points="3880.4 2179.57 4082 2391.97 4082 3212.85" data-cable-id="GPIO-43" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="u" data-name="GPIO-43" class="interactive-edge-hit" points="3880.4 2179.57 4082 2391.97 4082 3212.85" data-cable-id="GPIO-43" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="v" data-name="GPIO-44" class="bg interactive-edge" points="3880.4 2108.13 4158.16 2400.43 4158.16 3212.85" data-cable-id="GPIO-44" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="v" data-name="GPIO-44" class="interactive-edge-hit" points="3880.4 2108.13 4158.16 2400.43 4158.16 3212.85" data-cable-id="GPIO-44" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bn" x="3785.3" y="3135.37" width="475.31" height="77.74" rx="21.95" ry="21.95" />
+        <g>
+          <path class="bm" d="M3845.54,3171.59c-1.4-.64-3-1.04-4.81-1.21l9.36-5.95v-7.11h-22.87v6.55h13.62l.42.74-10.27,6.69,3.44,5.81c.5-.4,1.09-.74,1.79-1,.7-.26,1.51-.4,2.44-.4,1.7,0,3.04.47,4,1.42.96.95,1.44,2.16,1.44,3.65,0,.96-.22,1.82-.65,2.58-.43.76-1.06,1.36-1.88,1.79-.82.43-1.79.65-2.91.65-1.74,0-3.08-.44-4.04-1.32-.96-.88-1.44-2.04-1.44-3.46h-7.39c0,2.11.52,4,1.56,5.67,1.04,1.67,2.53,3.01,4.46,4s4.22,1.49,6.86,1.49,4.95-.48,6.86-1.44c1.91-.96,3.38-2.26,4.42-3.9s1.56-3.5,1.56-5.58v-.56c0-2.08-.52-3.9-1.56-5.46-1.04-1.56-2.5-2.78-4.39-3.65Z" />
+          <path class="bm" d="M3879.75,3161.04c-1.15-1.49-2.62-2.65-4.42-3.49-1.8-.84-3.95-1.25-6.46-1.25-2.73,0-5.11.51-7.13,1.53-2.03,1.02-3.6,2.46-4.72,4.3-1.12,1.84-1.67,3.99-1.67,6.44s.46,4.34,1.39,6.04c.93,1.71,2.26,3.03,4,3.97s3.79,1.42,6.18,1.42c2.11,0,3.97-.39,5.58-1.16,1.45-.7,2.6-1.73,3.48-3.06-.11,1.71-.38,3.19-.83,4.43-.59,1.63-1.6,2.85-3.02,3.67-1.43.82-3.38,1.23-5.86,1.23-1.24,0-2.45-.03-3.63-.09s-2.28-.16-3.3-.28v6.41c1.05.12,2.14.22,3.25.28,1.12.06,2.25.09,3.39.09,5.64,0,9.89-1.43,12.76-4.3,2.87-2.87,4.3-7.12,4.3-12.76v-1.95c0-2.23-.26-4.33-.79-6.3s-1.36-3.69-2.51-5.18ZM3874.64,3171.63c-.59.84-1.39,1.47-2.39,1.91-1.01.43-2.12.65-3.32.65-1.3,0-2.42-.24-3.35-.72s-1.64-1.15-2.14-2c-.5-.85-.74-1.87-.74-3.04s.26-2.15.77-3c.51-.85,1.24-1.53,2.18-2.02s2.1-.74,3.46-.74,2.57.25,3.53.74c.96.5,1.68,1.18,2.16,2.04s.72,1.86.72,2.97c0,1.3-.29,2.37-.88,3.21Z" />
+          <rect class="bm" x="3887.56" y="3174.79" width="19.61" height="6.65" />
+          <polygon class="bm" points="3935.57 3166.8 3928.51 3166.8 3928.51 3178.7 3919.17 3178.7 3918.52 3177.72 3929.53 3160.2 3923.63 3156.34 3910.75 3176.79 3910.75 3184.74 3928.51 3184.74 3928.51 3191.25 3935.57 3191.25 3935.57 3184.74 3939.48 3184.74 3939.48 3178.7 3935.57 3178.7 3935.57 3166.8" />
+          <path class="bm" d="M3966.69,3158.53c-2.22-1.49-5.04-2.23-8.48-2.23s-6.27.74-8.51,2.23c-2.23,1.49-3.89,3.49-4.97,6-1.08,2.51-1.63,5.31-1.63,8.41v2.7c0,2.2.28,4.3.84,6.3.56,2,1.44,3.77,2.65,5.3,1.21,1.53,2.77,2.74,4.69,3.62,1.92.88,4.23,1.33,6.92,1.33s5-.44,6.9-1.33,3.46-2.09,4.65-3.62c1.19-1.53,2.08-3.3,2.65-5.3.57-2,.86-4.1.86-6.3v-2.7c0-3.1-.54-5.9-1.63-8.41-1.08-2.51-2.74-4.51-4.95-6ZM3963.79,3182.49c-1.21,1.75-3.07,2.62-5.58,2.62s-4.42-.88-5.65-2.65c-1.22-1.77-1.84-4.51-1.84-8.23s.62-6.62,1.86-8.32c1.24-1.7,3.11-2.56,5.62-2.56s4.29.85,5.53,2.56c1.24,1.71,1.86,4.51,1.86,8.41,0,3.69-.6,6.41-1.81,8.16Z" />
+          <rect class="bm" x="3977.92" y="3174.79" width="19.61" height="6.65" />
+          <polygon class="bm" points="4025.93 3166.8 4018.86 3166.8 4018.86 3178.7 4009.52 3178.7 4008.87 3177.72 4019.89 3160.2 4013.98 3156.34 4001.11 3176.79 4001.11 3184.74 4018.86 3184.74 4018.86 3191.25 4025.93 3191.25 4025.93 3184.74 4029.83 3184.74 4029.83 3178.7 4025.93 3178.7 4025.93 3166.8" />
+          <polygon class="bm" points="4032.34 3163.92 4038.94 3163.92 4038.94 3191.25 4046.56 3191.25 4046.56 3157.32 4032.34 3157.32 4032.34 3163.92" />
+          <rect class="bm" x="4052.7" y="3174.79" width="19.61" height="6.65" />
+          <polygon class="bm" points="4100.71 3166.8 4093.65 3166.8 4093.65 3178.7 4084.3 3178.7 4083.65 3177.72 4094.67 3160.2 4088.77 3156.34 4075.89 3176.79 4075.89 3184.74 4093.65 3184.74 4093.65 3191.25 4100.71 3191.25 4100.71 3184.74 4104.62 3184.74 4104.62 3178.7 4100.71 3178.7 4100.71 3166.8" />
+          <path class="bm" d="M4126.88,3171.59c-1.4-.64-3-1.04-4.81-1.21l9.36-5.95v-7.11h-22.87v6.55h13.62l.42.74-10.27,6.69,3.44,5.81c.5-.4,1.09-.74,1.79-1,.7-.26,1.51-.4,2.44-.4,1.7,0,3.04.47,4,1.42.96.95,1.44,2.16,1.44,3.65,0,.96-.22,1.82-.65,2.58-.43.76-1.06,1.36-1.88,1.79-.82.43-1.79.65-2.91.65-1.74,0-3.08-.44-4.04-1.32-.96-.88-1.44-2.04-1.44-3.46h-7.39c0,2.11.52,4,1.56,5.67,1.04,1.67,2.53,3.01,4.46,4s4.22,1.49,6.86,1.49,4.95-.48,6.86-1.44c1.91-.96,3.38-2.26,4.42-3.9s1.56-3.5,1.56-5.58v-.56c0-2.08-.52-3.9-1.56-5.46-1.04-1.56-2.5-2.78-4.39-3.65Z" />
+          <rect class="bm" x="4136.97" y="3174.79" width="19.61" height="6.65" />
+          <polygon class="bm" points="4184.98 3166.8 4177.91 3166.8 4177.91 3178.7 4168.57 3178.7 4167.92 3177.72 4178.94 3160.2 4173.03 3156.34 4160.16 3176.79 4160.16 3184.74 4177.91 3184.74 4177.91 3191.25 4184.98 3191.25 4184.98 3184.74 4188.88 3184.74 4188.88 3178.7 4184.98 3178.7 4184.98 3166.8" />
+          <polygon class="bm" points="4220.12 3178.7 4216.21 3178.7 4216.21 3166.8 4209.15 3166.8 4209.15 3178.7 4199.8 3178.7 4199.15 3177.72 4210.17 3160.2 4204.27 3156.34 4191.39 3176.79 4191.39 3184.74 4209.15 3184.74 4209.15 3191.25 4216.21 3191.25 4216.21 3184.74 4220.12 3184.74 4220.12 3178.7" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="USB_Node" class="interactive-node"><rect x="4727.23" y="2272.51" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(4867.37 2530.75)"><tspan x="0" y="0">US</tspan><tspan class="cf" x="81.04" y="0">B</tspan><tspan x="118.94" y="0">-C</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="w" data-name="GPIO19" class="bb interactive-edge" points="3880.4 2036.85 4402.96 2558.95 4658.71 2558.95" data-cable-id="GPIO-19" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="w" data-name="GPIO19" class="interactive-edge-hit" points="3880.4 2036.85 4402.96 2558.95 4658.71 2558.95" data-cable-id="GPIO-19" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="x" data-name="GPIO-20" class="bb interactive-edge" points="3880.4 1965.44 4382.78 2452.6 4658.71 2452.6" data-cable-id="GPIO-20" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="x" data-name="GPIO-20" class="interactive-edge-hit" points="3880.4 1965.44 4382.78 2452.6 4658.71 2452.6" data-cable-id="GPIO-20" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bo" x="4382.32" y="2471.35" width="475.31" height="77.74" rx="21.95" ry="21.95" transform="translate(2109.76 7130.2) rotate(-90)" />
+        <g>
+          <polygon class="bm" points="4603.06 2578.28 4609.66 2578.28 4609.66 2571.68 4636.99 2571.68 4636.99 2564.06 4603.06 2564.06 4603.06 2578.28" />
+          <path class="bm" d="M4620.21,2530.5h-1.95c-2.23,0-4.33.26-6.3.79-1.97.53-3.69,1.36-5.18,2.51s-2.65,2.62-3.49,4.42c-.84,1.8-1.25,3.95-1.25,6.46,0,2.73.51,5.11,1.53,7.13s2.46,3.6,4.3,4.72c1.84,1.12,3.99,1.67,6.44,1.67s4.34-.46,6.04-1.39c1.7-.93,3.03-2.26,3.97-4,.95-1.74,1.42-3.79,1.42-6.18,0-2.11-.39-3.97-1.16-5.58-.69-1.45-1.73-2.6-3.06-3.48,1.71.11,3.19.38,4.43.83,1.63.59,2.85,1.6,3.67,3.02.82,1.43,1.23,3.38,1.23,5.86,0,1.24-.03,2.45-.09,3.63-.06,1.18-.15,2.28-.28,3.3h6.41c.12-1.05.22-2.14.28-3.25.06-1.12.09-2.25.09-3.39,0-5.64-1.43-9.89-4.3-12.76-2.87-2.87-7.12-4.3-12.76-4.3ZM4619.21,2547.98c-.48.93-1.15,1.64-2,2.14-.85.5-1.87.74-3.04.74s-2.15-.26-3-.77c-.85-.51-1.53-1.24-2.02-2.18s-.74-2.1-.74-3.46.25-2.57.74-3.53c.5-.96,1.18-1.68,2.04-2.16.87-.48,1.86-.72,2.97-.72,1.3,0,2.37.29,3.21.88.84.59,1.47,1.39,1.91,2.39.43,1.01.65,2.12.65,3.32,0,1.3-.24,2.42-.72,3.35Z" />
+          <rect class="bm" x="4620.54" y="2506.38" width="6.65" height="19.61" />
+          <path class="bm" d="M4607.59,2500.62c1.72.93,3.66,1.39,5.83,1.39v-7.39c-1.55,0-2.77-.42-3.67-1.25-.9-.84-1.35-2.06-1.35-3.67s.43-2.8,1.3-3.65c.87-.85,1.98-1.28,3.35-1.28s2.43.34,3.3,1.02c.87.68,1.6,1.7,2.18,3.07l2.37,5.48c.74,1.74,1.54,3.14,2.39,4.21.85,1.07,1.82,1.84,2.9,2.32,1.08.48,2.35.72,3.81.72h6.97v-24.26h-6.55v16.78h-.79c-.74,0-1.33-.19-1.77-.58-.43-.39-.85-1.05-1.25-1.98l-2.37-5.44c-1.3-2.97-2.8-5.17-4.49-6.6-1.69-1.42-3.83-2.14-6.44-2.14h-.56c-2.01,0-3.83.47-5.44,1.42-1.61.95-2.9,2.32-3.86,4.14-.96,1.81-1.44,4.07-1.44,6.76s.5,5,1.49,6.81,2.35,3.18,4.07,4.11Z" />
+          <path class="bm" d="M4610.27,2470.69c2.51,1.08,5.31,1.63,8.41,1.63h2.7c2.2,0,4.3-.28,6.3-.84,2-.56,3.76-1.44,5.3-2.65,1.53-1.21,2.74-2.77,3.63-4.69.88-1.92,1.32-4.23,1.32-6.92s-.44-5-1.32-6.9c-.88-1.91-2.09-3.46-3.63-4.65-1.53-1.19-3.3-2.08-5.3-2.65-2-.57-4.1-.86-6.3-.86h-2.7c-3.1,0-5.9.54-8.41,1.63-2.51,1.08-4.51,2.74-6,4.95-1.49,2.22-2.23,5.04-2.23,8.48s.74,6.27,2.23,8.51c1.49,2.23,3.49,3.89,6,4.97ZM4611.66,2451.68c1.7-1.24,4.51-1.86,8.41-1.86,3.69,0,6.41.6,8.16,1.81,1.75,1.21,2.63,3.07,2.63,5.58s-.88,4.42-2.65,5.65c-1.77,1.22-4.51,1.84-8.23,1.84s-6.62-.62-8.32-1.86c-1.7-1.24-2.56-3.11-2.56-5.62s.85-4.29,2.56-5.53Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="Power" class="interactive-node"><rect x="4727.23" y="1679.01" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(4840.54 1909.47)"><tspan class="cg" x="0" y="0">B</tspan><tspan class="bz" x="38.19" y="0">A</tspan><tspan x="78.51" y="0">TERÍA</tspan><tspan x="-4.58" y="67.49">400MAh</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="y" data-name="GPIO-GND" class="bf interactive-edge" points="3880.4 1894.12 4219.22 2013.13 4658.71 2012.27" data-cable-id="GPIO-GND" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="y" data-name="GPIO-GND" class="interactive-edge-hit" points="3880.4 1894.12 4219.22 2013.13 4658.71 2012.27" data-cable-id="GPIO-GND" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="z" data-name="GPIO-VBAT" class="bc interactive-edge" points="3880.4 1822.78 4222.58 1824.56 4658.71 1824.56" data-cable-id="GPIO-VBAT" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="z" data-name="GPIO-VBAT" class="interactive-edge-hit" points="3880.4 1822.78 4222.58 1824.56 4658.71 1824.56" data-cable-id="GPIO-VBAT" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bj" x="4382.32" y="1878.35" width="475.31" height="77.74" rx="21.95" ry="21.95" transform="translate(2702.76 6537.2) rotate(-90)" />
+        <g>
+          <path class="bm" d="M4636.01,2021.77c-1.27-2.56-3.08-4.56-5.44-6.02h-5.72v-2.79h-5.53v18.68h5.53v-8.88h2.75c.79.63,1.48,1.42,2.04,2.42.87,1.55,1.3,3.38,1.3,5.48,0,1.58-.26,3.01-.79,4.3-.53,1.29-1.28,2.36-2.25,3.23s-2.14,1.53-3.49,1.98c-1.35.45-2.84.67-4.49.67s-3.03-.21-4.35-.63c-1.32-.42-2.46-1.04-3.42-1.86-.96-.82-1.7-1.81-2.21-2.97s-.77-2.49-.77-3.97.26-2.89.77-4.11c.51-1.22,1.23-2.23,2.16-3.02.93-.79,2.01-1.29,3.25-1.51v-7.62c-2.63.22-4.95,1.04-6.95,2.46-2,1.43-3.56,3.32-4.69,5.67-1.13,2.36-1.7,5.07-1.7,8.13,0,2.82.5,5.31,1.51,7.46,1.01,2.15,2.34,3.95,4,5.39,1.66,1.44,3.51,2.53,5.55,3.25,2.04.73,4.14,1.09,6.27,1.09h1.02c2.08,0,4.15-.36,6.23-1.09,2.08-.73,3.97-1.83,5.67-3.3,1.7-1.47,3.07-3.34,4.09-5.6,1.02-2.26,1.53-4.91,1.53-7.95,0-3.38-.64-6.34-1.91-8.9Z" />
+          <polygon class="bm" points="4636.99 1987.54 4636.99 1974.94 4603.06 1974.94 4603.06 1982.1 4630.81 1982.1 4630.81 1982.75 4603.06 1995.53 4603.06 2008.04 4636.99 2008.04 4636.99 2000.97 4609.24 2000.97 4609.24 2000.32 4636.99 1987.54" />
+          <path class="bm" d="M4637.18,1960.63v-5.9c0-3.07-.47-5.75-1.42-8.04-.94-2.29-2.22-4.21-3.83-5.76-1.61-1.55-3.41-2.7-5.39-3.46-1.98-.76-4.01-1.14-6.09-1.14h-1.02c-2.2,0-4.3.38-6.3,1.14s-3.77,1.91-5.32,3.46c-1.55,1.55-2.77,3.47-3.67,5.76-.9,2.29-1.35,4.97-1.35,8.04v12.6h34.39v-6.69ZM4609.94,1954.35c0-1.61.22-3.05.65-4.32.43-1.27,1.08-2.35,1.95-3.23.87-.88,1.92-1.56,3.16-2.04,1.24-.48,2.65-.72,4.23-.72s2.91.24,4.16.72,2.32,1.16,3.21,2.04,1.56,1.96,2.04,3.23c.48,1.27.72,2.71.72,4.32v5.35h-20.13v-5.35Z" />
+          <rect class="bm" x="4620.54" y="1913.41" width="6.65" height="19.61" />
+          <polygon class="bm" points="4636.99 1889.14 4603.06 1879.52 4603.06 1887.14 4630.81 1894.49 4630.81 1896.09 4603.06 1904.02 4603.06 1911.92 4636.99 1901.55 4636.99 1889.14" />
+          <path class="bm" d="M4637.27,1868.14v-7.58c0-2.66-.39-4.9-1.16-6.69-.77-1.8-1.88-3.16-3.32-4.09s-3.17-1.39-5.18-1.39h-.65c-2.17,0-3.89.53-5.16,1.58-.97.8-1.73,1.83-2.29,3.08-.42-.62-.91-1.19-1.47-1.66-1.27-1.07-2.96-1.6-5.07-1.6h-.7c-3.04,0-5.38,1.05-7.02,3.14-1.64,2.09-2.46,5.09-2.46,8.99v12.74h34.49v-6.51ZM4623.86,1856.98c.73-.71,1.77-1.07,3.14-1.07s2.42.36,3.16,1.07c.74.71,1.12,1.78,1.12,3.21v7.02h-8.51v-7.02c0-1.42.36-2.49,1.09-3.21ZM4608.78,1861.44c0-1.42.36-2.47,1.09-3.14.73-.67,1.74-1,3.04-1s2.23.33,2.97,1,1.12,1.71,1.12,3.14v5.76h-8.23v-5.76Z" />
+          <path class="bm" d="M4636.99,1838.67l-8.41-2.69v-14.17l8.41-2.76v-7.9l-33.93,11.62v12.32l33.93,11.2v-7.62ZM4622.26,1833.96l-12.92-4.13v-1.7l12.92-4.24v10.07Z" />
+          <polygon class="bm" points="4609.75 1803.02 4636.99 1803.02 4636.99 1795.39 4609.75 1795.39 4609.75 1785.82 4603.06 1785.82 4603.06 1812.59 4609.75 1812.59 4609.75 1803.02" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="SD" class="interactive-node"><rect x="4727.23" y="1087.51" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(4814.59 1345.74)"><tspan x="0" y="0">MIC</tspan><tspan class="co" x="118.27" y="0">R</tspan><tspan class="bt" x="158.82" y="0">O SD</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="aa" data-name="GPIO-13" class="ba interactive-edge" points="3880.4 1751.44 4377.25 1467.08 4658.71 1467.08" data-cable-id="GPIO-13" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="aa" data-name="GPIO-13" class="interactive-edge-hit" points="3880.4 1751.44 4377.25 1467.08 4658.71 1467.08" data-cable-id="GPIO-13" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="ab" data-name="GPIO-17" class="ba interactive-edge" points="3880.4 1680.05 4360.21 1388.89 4658.71 1388.89" data-cable-id="GPIO-17" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ab" data-name="GPIO-17" class="interactive-edge-hit" points="3880.4 1680.05 4360.21 1388.89 4658.71 1388.89" data-cable-id="GPIO-17" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="ac" data-name="GPIO-18" class="ba interactive-edge" points="3879.35 1608.76 4336.32 1305.31 4658.71 1305.31" data-cable-id="GPIO-18" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ac" data-name="GPIO-18" class="interactive-edge-hit" points="3879.35 1608.76 4336.32 1305.31 4658.71 1305.31" data-cable-id="GPIO-18" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="ad" data-name="GPIO21" class="ba interactive-edge" points="3854.45 1542.63 4318.37 1226.66 4658.71 1226.66" data-cable-id="GPIO-21" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ad" data-name="GPIO21" class="interactive-edge-hit" points="3854.45 1542.63 4318.37 1226.66 4658.71 1226.66" data-cable-id="GPIO-21" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bq" x="4382.32" y="1286.29" width="475.31" height="77.74" rx="21.95" ry="21.95" transform="translate(3294.82 5945.14) rotate(-90)" />
+        <g>
+          <polygon class="bm" points="4603.04 1456.58 4609.64 1456.58 4609.64 1449.98 4636.97 1449.98 4636.97 1442.36 4603.04 1442.36 4603.04 1456.58" />
+          <path class="bm" d="M4632.55,1412.54c-1.64-1.04-3.5-1.56-5.58-1.56h-.56c-2.08,0-3.9.52-5.46,1.56-1.56,1.04-2.78,2.5-3.65,4.39-.64,1.4-1.04,3-1.21,4.81l-5.95-9.36h-7.11v22.87h6.55v-13.62l.74-.42,6.69,10.27,5.81-3.44c-.4-.5-.74-1.09-1-1.79-.26-.7-.4-1.51-.4-2.44,0-1.7.47-3.04,1.42-4,.95-.96,2.16-1.44,3.65-1.44.96,0,1.82.22,2.58.65.76.43,1.36,1.06,1.79,1.88.43.82.65,1.79.65,2.91,0,1.74-.44,3.08-1.32,4.04-.88.96-2.04,1.44-3.46,1.44v7.39c2.11,0,4-.52,5.67-1.56,1.67-1.04,3.01-2.53,4-4.46s1.49-4.22,1.49-6.86-.48-4.95-1.44-6.86c-.96-1.91-2.26-3.38-3.9-4.42Z" />
+          <rect class="bm" x="4620.51" y="1387.23" width="6.65" height="19.61" />
+          <polygon class="bm" points="4636.97 1369.43 4603.04 1369.43 4603.04 1383.65 4609.64 1383.65 4609.64 1377.05 4636.97 1377.05 4636.97 1369.43" />
+          <polygon class="bm" points="4610.01 1346.75 4636.97 1358.65 4636.97 1350.56 4607.87 1338.06 4603.04 1338.06 4603.04 1357.58 4603.04 1363.76 4609.31 1363.76 4614.75 1363.76 4614.75 1357.58 4609.31 1357.58 4609.31 1347.26 4610.01 1346.75" />
+          <rect class="bm" x="4620.51" y="1315.47" width="6.65" height="19.61" />
+          <polygon class="bm" points="4636.97 1297.67 4603.04 1297.67 4603.04 1311.89 4609.64 1311.89 4609.64 1305.29 4636.97 1305.29 4636.97 1297.67" />
+          <path class="bm" d="M4606.2,1288.98c1.36,1.08,3.1,1.63,5.21,1.63,1.24,0,2.32-.2,3.25-.6.93-.4,1.71-.96,2.35-1.67.64-.71,1.14-1.5,1.51-2.37h.65c.4,1.15.99,2.15,1.77,3,.77.85,1.71,1.51,2.81,1.98,1.1.46,2.38.7,3.83.7,2.2,0,4.07-.57,5.62-1.7,1.55-1.13,2.73-2.71,3.53-4.74.81-2.03,1.21-4.41,1.21-7.13s-.4-5.15-1.21-7.18c-.81-2.03-1.98-3.61-3.53-4.74-1.55-1.13-3.42-1.7-5.62-1.7-1.46,0-2.73.23-3.83.7-1.1.46-2.04,1.13-2.81,2-.77.87-1.36,1.88-1.77,3.02h-.65c-.37-.9-.88-1.7-1.51-2.42-.63-.71-1.42-1.26-2.35-1.65-.93-.39-2.01-.58-3.25-.58-2.11,0-3.84.54-5.21,1.63-1.36,1.08-2.39,2.57-3.09,4.46-.7,1.89-1.05,4.04-1.05,6.46s.35,4.49,1.05,6.41c.7,1.92,1.73,3.42,3.09,4.51ZM4622.28,1274.73c.37-.95.92-1.67,1.65-2.16.73-.5,1.63-.74,2.72-.74s2.01.26,2.77.77c.76.51,1.32,1.23,1.7,2.16.37.93.56,2.03.56,3.3s-.19,2.33-.56,3.28c-.37.95-.94,1.67-1.7,2.16-.76.5-1.68.74-2.77.74s-1.99-.25-2.72-.74c-.73-.5-1.28-1.22-1.65-2.16-.37-.94-.56-2.04-.56-3.28s.19-2.38.56-3.32ZM4609.29,1274.24c.64-.93,1.6-1.39,2.9-1.39s2.19.46,2.86,1.39c.67.93,1,2.2,1,3.81s-.33,2.84-1,3.79c-.67.95-1.62,1.42-2.86,1.42s-2.23-.46-2.88-1.39c-.65-.93-.98-2.2-.98-3.81s.32-2.88.95-3.81Z" />
+          <rect class="bm" x="4620.51" y="1240.92" width="6.65" height="19.61" />
+          <path class="bm" d="M4607.57,1235.16c1.72.93,3.66,1.39,5.83,1.39v-7.39c-1.55,0-2.77-.42-3.67-1.25-.9-.84-1.35-2.06-1.35-3.67s.43-2.8,1.3-3.65c.87-.85,1.98-1.28,3.35-1.28s2.43.34,3.3,1.02c.87.68,1.6,1.7,2.18,3.07l2.37,5.48c.74,1.74,1.54,3.14,2.39,4.21.85,1.07,1.82,1.84,2.9,2.32,1.08.48,2.35.72,3.81.72h6.97v-24.26h-6.55v16.78h-.79c-.74,0-1.33-.19-1.77-.58-.43-.39-.85-1.05-1.25-1.98l-2.37-5.44c-1.3-2.97-2.8-5.17-4.49-6.6-1.69-1.42-3.83-2.14-6.44-2.14h-.56c-2.01,0-3.83.47-5.44,1.42-1.61.95-2.9,2.32-3.86,4.14-.96,1.81-1.44,4.07-1.44,6.76s.5,5,1.49,6.81,2.35,3.18,4.07,4.11Z" />
+          <polygon class="bm" points="4609.64 1201.37 4636.97 1201.37 4636.97 1193.74 4603.04 1193.74 4603.04 1207.97 4609.64 1207.97 4609.64 1201.37" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <circle class="bn" cx="3517.71" cy="2380.06" r="23.54" />
+  <g>
+    <g>
+      <g id="Touch" class="interactive-node"><rect x="3488.44" y="114.22" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(3616.29 338.24)"><tspan class="ce" x="0" y="0">T</tspan><tspan class="az" x="33.63" y="0">OUCH</tspan><tspan class="ci" x="-47.07" y="67.49">P</tspan><tspan x="-12.6" y="67.49">AN</tspan><tspan class="bz" x="80.65" y="67.49">T</tspan><tspan x="111.75" y="67.49">AL</tspan><tspan class="cs" x="187.11" y="67.49">L</tspan><tspan x="218.83" y="67.49">A</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="ae" data-name="GPIO-12" class="bg interactive-edge" points="3801.86 1495.47 3856.86 1404.93 3856.86 645.16" data-cable-id="GPIO-12" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ae" data-name="GPIO-12" class="interactive-edge-hit" points="3801.86 1495.47 3856.86 1404.93 3856.86 645.16" data-cable-id="GPIO-12" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="af" data-name="GPIO-11" class="bg interactive-edge" points="3733.36 1477.95 3778.31 1407.28 3778.31 645.16" data-cable-id="GPIO-11" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="af" data-name="GPIO-11" class="interactive-edge-hit" points="3733.36 1477.95 3778.31 1407.28 3778.31 645.16" data-cable-id="GPIO-11" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="ag" data-name="GPIO-7" class="bg interactive-edge" points="3662.06 1477.95 3681.13 1427.21 3681.13 645.16" data-cable-id="GPIO-7" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ag" data-name="GPIO-7" class="interactive-edge-hit" points="3662.06 1477.95 3681.13 1427.21 3681.13 645.16" data-cable-id="GPIO-7" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><line id="ah" data-name="GPIO-6" class="bg interactive-edge" x1="3590.68" y1="1477.95" x2="3590.68" y2="645.16" data-cable-id="GPIO-6" style="pointer-events: stroke; cursor: pointer;" />
+      <line id="ah" data-name="GPIO-6" class="interactive-edge-hit" x1="3590.68" y1="1477.95" x2="3590.68" y2="645.16" data-cable-id="GPIO-6" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bn" x="3489.2" y="645.01" width="475.31" height="77.74" rx="21.95" ry="21.95" />
+        <g>
+          <path class="bm" d="M3641.52,679.58c-1.74-.94-3.8-1.42-6.18-1.42-2.11,0-3.97.39-5.58,1.16-1.45.7-2.6,1.73-3.48,3.06.11-1.71.38-3.19.83-4.43.59-1.63,1.6-2.85,3.02-3.67,1.42-.82,3.38-1.23,5.86-1.23,1.24,0,2.45.03,3.62.09,1.18.06,2.28.16,3.3.28v-6.41c-1.05-.12-2.14-.22-3.25-.28-1.12-.06-2.25-.09-3.39-.09-5.64,0-9.89,1.43-12.76,4.3-2.87,2.87-4.3,7.12-4.3,12.76v1.95c0,2.23.26,4.33.79,6.3.53,1.97,1.36,3.7,2.51,5.18s2.62,2.65,4.42,3.49c1.8.84,3.95,1.25,6.46,1.25,2.73,0,5.1-.51,7.13-1.53s3.6-2.46,4.72-4.3c1.12-1.84,1.67-3.99,1.67-6.44s-.46-4.34-1.39-6.04-2.26-3.03-4-3.97ZM3638.81,692.73c-.51.85-1.24,1.53-2.18,2.02-.95.5-2.1.74-3.46.74s-2.57-.25-3.53-.74c-.96-.5-1.68-1.18-2.16-2.04-.48-.87-.72-1.86-.72-2.97,0-1.3.29-2.37.88-3.21.59-.84,1.39-1.47,2.39-1.91,1.01-.43,2.11-.65,3.32-.65,1.3,0,2.42.24,3.35.72.93.48,1.64,1.15,2.14,2,.5.85.74,1.87.74,3.04s-.26,2.15-.77,3Z" />
+          <rect class="bm" x="3650.63" y="684.39" width="19.61" height="6.65" />
+          <polygon class="bm" points="3673.83 666.92 3673.83 673.19 3673.83 678.63 3680.01 678.63 3680.01 673.19 3690.33 673.19 3690.84 673.89 3678.94 700.85 3687.03 700.85 3699.53 671.75 3699.53 666.92 3680.01 666.92 3673.83 666.92" />
+          <rect class="bm" x="3702.5" y="684.39" width="19.61" height="6.65" />
+          <polygon class="bm" points="3725.7 673.52 3732.3 673.52 3732.3 700.85 3739.92 700.85 3739.92 666.92 3725.7 666.92 3725.7 673.52" />
+          <polygon class="bm" points="3745.59 673.52 3752.19 673.52 3752.19 700.85 3759.81 700.85 3759.81 666.92 3745.59 666.92 3745.59 673.52" />
+          <rect class="bm" x="3765.95" y="684.39" width="19.61" height="6.65" />
+          <polygon class="bm" points="3789.14 673.52 3795.74 673.52 3795.74 700.85 3803.36 700.85 3803.36 666.92 3789.14 666.92 3789.14 673.52" />
+          <path class="bm" d="M3817.72,694.29v-.79c0-.74.19-1.33.58-1.77.39-.43,1.05-.85,1.98-1.25l5.44-2.37c2.97-1.3,5.17-2.8,6.6-4.49,1.42-1.69,2.14-3.83,2.14-6.44v-.56c0-2.01-.47-3.83-1.42-5.44-.95-1.61-2.32-2.9-4.14-3.86-1.81-.96-4.07-1.44-6.76-1.44s-5,.5-6.81,1.49-3.18,2.35-4.11,4.07c-.93,1.72-1.39,3.66-1.39,5.83h7.39c0-1.55.42-2.77,1.25-3.67.84-.9,2.06-1.35,3.67-1.35s2.8.43,3.65,1.3c.85.87,1.28,1.98,1.28,3.35s-.34,2.43-1.02,3.3c-.68.87-1.7,1.6-3.07,2.18l-5.48,2.37c-1.74.74-3.14,1.54-4.21,2.39-1.07.85-1.84,1.82-2.32,2.9-.48,1.08-.72,2.35-.72,3.81v6.97h24.26v-6.55h-16.78Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="TFT" class="interactive-node"><rect x="2894.94" y="114.22" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(2975.71 338.24)"><tspan class="ci" x="0" y="0">P</tspan><tspan x="34.47" y="0">AN</tspan><tspan class="bz" x="127.72" y="0">T</tspan><tspan x="158.82" y="0">AL</tspan><tspan class="cs" x="234.18" y="0">L</tspan><tspan x="265.9" y="0">A</tspan><tspan x="83.52" y="67.49">1.28’’</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="ai" data-name="GPIO-47" class="bg interactive-edge" points="3519.32 1477.95 3305.31 1226.66 3305.31 645.16" data-cable-id="GPIO-47" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ai" data-name="GPIO-47" class="interactive-edge-hit" points="3519.32 1477.95 3305.31 1226.66 3305.31 645.16" data-cable-id="GPIO-47" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="aj" data-name="GPIO-42" class="bg interactive-edge" points="3447.98 1477.95 3233.96 1226.66 3233.96 645.16" data-cable-id="GPIO-42" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="aj" data-name="GPIO-42" class="interactive-edge-hit" points="3447.98 1477.95 3233.96 1226.66 3233.96 645.16" data-cable-id="GPIO-42" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="ak" data-name="GPIO-38" class="bg interactive-edge" points="3376.64 1477.95 3162.55 1232.66 3162.55 645.16" data-cable-id="GPIO-38" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ak" data-name="GPIO-38" class="interactive-edge-hit" points="3376.64 1477.95 3162.55 1232.66 3162.55 645.16" data-cable-id="GPIO-38" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="al" data-name="GPIO-5" class="ba interactive-edge" points="3305.31 1477.95 3091.55 1245.24 3091.55 645.16" data-cable-id="GPIO-5" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="al" data-name="GPIO-5" class="interactive-edge-hit" points="3305.31 1477.95 3091.55 1245.24 3091.55 645.16" data-cable-id="GPIO-5" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="am" data-name="GPIO-4" class="ba interactive-edge" points="3233.96 1477.95 3011.9 1247.98 3011.9 645.16" data-cable-id="GPIO-4" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="am" data-name="GPIO-4" class="interactive-edge-hit" points="3233.96 1477.95 3011.9 1247.98 3011.9 645.16" data-cable-id="GPIO-4" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="an" data-name="GPIO-2" class="ba interactive-edge" points="3162.55 1477.95 2946.74 1268.73 2946.74 645.16" data-cable-id="GPIO-2" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="an" data-name="GPIO-2" class="interactive-edge-hit" points="3162.55 1477.95 2946.74 1268.73 2946.74 645.16" data-cable-id="GPIO-2" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bq" x="2893.81" y="645" width="475.31" height="77.74" rx="21.95" ry="21.95" />
+        <g>
+          <path class="bm" d="M2946.39,693.51c0-.74.19-1.33.58-1.77.39-.43,1.05-.85,1.98-1.25l5.44-2.37c2.97-1.3,5.17-2.8,6.6-4.49,1.42-1.69,2.14-3.83,2.14-6.44v-.56c0-2.01-.47-3.83-1.42-5.44-.95-1.61-2.32-2.9-4.14-3.86-1.81-.96-4.07-1.44-6.76-1.44s-5,.5-6.81,1.49-3.18,2.35-4.11,4.07c-.93,1.72-1.39,3.66-1.39,5.83h7.39c0-1.55.42-2.77,1.25-3.67.84-.9,2.06-1.35,3.67-1.35s2.8.43,3.65,1.3c.85.87,1.28,1.98,1.28,3.35s-.34,2.43-1.02,3.3c-.68.87-1.7,1.6-3.07,2.18l-5.48,2.37c-1.74.74-3.14,1.54-4.21,2.39-1.07.85-1.84,1.82-2.32,2.9-.48,1.08-.72,2.35-.72,3.81v6.97h24.26v-6.55h-16.78v-.79Z" />
+          <rect class="bm" x="2967.53" y="684.4" width="19.61" height="6.65" />
+          <polygon class="bm" points="3015.55 676.41 3008.48 676.41 3008.48 688.31 2999.14 688.31 2998.49 687.33 3009.5 669.81 3003.6 665.95 2990.73 686.4 2990.73 694.35 3008.48 694.35 3008.48 700.86 3015.55 700.86 3015.55 694.35 3019.45 694.35 3019.45 688.31 3015.55 688.31 3015.55 676.41" />
+          <rect class="bm" x="3022.43" y="684.4" width="19.61" height="6.65" />
+          <path class="bm" d="M3066.97,679.59c-1.75-1.01-3.87-1.51-6.34-1.51-2.14,0-3.87.38-5.18,1.14-.49.28-.95.6-1.39.93l.62-6.67h14.82v-6.55h-20.59l-1.72,19.15h7.16c.43-.71,1.1-1.29,2-1.74.9-.45,1.91-.67,3.02-.67,1.21,0,2.23.26,3.07.77.84.51,1.48,1.21,1.93,2.09s.67,1.9.67,3.04-.22,2.11-.67,3c-.45.88-1.1,1.58-1.95,2.09-.85.51-1.9.77-3.14.77-1.12,0-2.11-.22-2.97-.67s-1.54-1.07-2.02-1.86-.72-1.71-.72-2.77h-7.39c0,2.17.53,4.13,1.58,5.88,1.05,1.75,2.56,3.15,4.51,4.21,1.95,1.05,4.28,1.58,6.97,1.58s5.21-.57,7.18-1.7c1.97-1.13,3.46-2.59,4.49-4.39,1.02-1.8,1.53-3.73,1.53-5.81v-.6c0-2.08-.47-3.96-1.42-5.65-.95-1.69-2.29-3.04-4.04-4.04Z" />
+          <rect class="bm" x="3076.02" y="684.4" width="19.61" height="6.65" />
+          <path class="bm" d="M3118.96,681.2c-1.4-.64-3-1.04-4.81-1.21l9.36-5.95v-7.11h-22.87v6.55h13.62l.42.74-10.27,6.69,3.44,5.81c.5-.4,1.09-.74,1.79-1,.7-.26,1.51-.4,2.44-.4,1.7,0,3.04.47,4,1.42.96.95,1.44,2.16,1.44,3.65,0,.96-.22,1.82-.65,2.58-.43.76-1.06,1.36-1.88,1.79-.82.43-1.79.65-2.91.65-1.74,0-3.08-.44-4.04-1.32-.96-.88-1.44-2.04-1.44-3.46h-7.39c0,2.11.52,4,1.56,5.67,1.04,1.67,2.53,3.01,4.46,4s4.22,1.49,6.86,1.49,4.95-.48,6.86-1.44c1.91-.96,3.38-2.26,4.42-3.9,1.04-1.64,1.56-3.5,1.56-5.58v-.56c0-2.08-.52-3.9-1.56-5.46-1.04-1.56-2.5-2.78-4.39-3.65Z" />
+          <path class="bm" d="M3153.45,684.82c-.87-.77-1.88-1.36-3.02-1.77v-.65c.9-.37,1.7-.88,2.42-1.51.71-.63,1.26-1.42,1.65-2.35.39-.93.58-2.01.58-3.25,0-2.11-.54-3.84-1.63-5.21-1.08-1.36-2.57-2.39-4.46-3.09-1.89-.7-4.04-1.05-6.46-1.05s-4.49.35-6.41,1.05c-1.92.7-3.42,1.73-4.51,3.09-1.08,1.36-1.63,3.1-1.63,5.21,0,1.24.2,2.32.6,3.25.4.93.96,1.71,1.67,2.35.71.64,1.5,1.14,2.37,1.51v.65c-1.15.4-2.15.99-3,1.77-.85.77-1.51,1.71-1.98,2.81-.46,1.1-.7,2.38-.7,3.83,0,2.2.57,4.07,1.7,5.62,1.13,1.55,2.71,2.73,4.74,3.53,2.03.81,4.41,1.21,7.13,1.21s5.15-.4,7.18-1.21c2.03-.81,3.61-1.98,4.74-3.53,1.13-1.55,1.7-3.42,1.7-5.62,0-1.46-.23-2.73-.7-3.83-.46-1.1-1.13-2.04-2-2.81ZM3138.71,673.2c.93-.65,2.2-.98,3.81-.98s2.88.32,3.81.95c.93.64,1.39,1.6,1.39,2.9s-.46,2.19-1.39,2.86c-.93.67-2.2,1-3.81,1s-2.84-.33-3.79-1c-.95-.67-1.42-1.62-1.42-2.86s.46-2.23,1.39-2.88ZM3147.99,693.3c-.51.76-1.23,1.32-2.16,1.7-.93.37-2.03.56-3.3.56s-2.33-.19-3.28-.56c-.95-.37-1.67-.94-2.16-1.7-.5-.76-.74-1.68-.74-2.77s.25-1.99.74-2.72c.5-.73,1.22-1.28,2.16-1.65.94-.37,2.04-.56,3.28-.56s2.38.19,3.32.56c.95.37,1.67.92,2.16,1.65.5.73.74,1.63.74,2.72s-.26,2.01-.77,2.77Z" />
+          <rect class="bm" x="3160.05" y="684.4" width="19.61" height="6.65" />
+          <polygon class="bm" points="3208.06 676.41 3201 676.41 3201 688.31 3191.65 688.31 3191 687.33 3202.02 669.81 3196.11 665.95 3183.24 686.4 3183.24 694.35 3201 694.35 3201 700.86 3208.06 700.86 3208.06 694.35 3211.96 694.35 3211.96 688.31 3208.06 688.31 3208.06 676.41" />
+          <path class="bm" d="M3223.17,693.51c0-.74.19-1.33.58-1.77.39-.43,1.05-.85,1.98-1.25l5.44-2.37c2.97-1.3,5.17-2.8,6.6-4.49,1.42-1.69,2.14-3.83,2.14-6.44v-.56c0-2.01-.47-3.83-1.42-5.44-.95-1.61-2.32-2.9-4.14-3.86-1.81-.96-4.07-1.44-6.76-1.44s-5,.5-6.81,1.49-3.18,2.35-4.11,4.07c-.93,1.72-1.39,3.66-1.39,5.83h7.39c0-1.55.42-2.77,1.25-3.67.84-.9,2.06-1.35,3.67-1.35s2.8.43,3.65,1.3c.85.87,1.28,1.98,1.28,3.35s-.34,2.43-1.02,3.3c-.68.87-1.7,1.6-3.07,2.18l-5.48,2.37c-1.74.74-3.14,1.54-4.21,2.39-1.07.85-1.84,1.82-2.32,2.9-.48,1.08-.72,2.35-.72,3.81v6.97h24.26v-6.55h-16.78v-.79Z" />
+          <rect class="bm" x="3244.31" y="684.4" width="19.61" height="6.65" />
+          <polygon class="bm" points="3292.33 676.41 3285.26 676.41 3285.26 688.31 3275.92 688.31 3275.27 687.33 3286.28 669.81 3280.38 665.95 3267.51 686.4 3267.51 694.35 3285.26 694.35 3285.26 700.86 3292.33 700.86 3292.33 694.35 3296.23 694.35 3296.23 688.31 3292.33 688.31 3292.33 676.41" />
+          <polygon class="bm" points="3304.92 666.93 3298.74 666.93 3298.74 673.2 3298.74 678.64 3304.92 678.64 3304.92 673.2 3315.24 673.2 3315.75 673.9 3303.85 700.86 3311.94 700.86 3324.44 671.76 3324.44 666.93 3304.92 666.93" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <g>
+    <g>
+      <g id="Mic" class="interactive-node"><rect x="1656.15" y="2272.51" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(1834.67 2530.75)"><tspan x="0" y="0">MIC</tspan></text>
+    </g></g>
+    <g>
+      <polyline id="ao" data-name="GPIO-10" class="bd interactive-edge" points="2978.28 1928.25 2380.79 2510.17 2186.14 2510.17" data-cable-id="GPIO-10" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ao" data-name="GPIO-10" class="interactive-edge-hit" points="2978.28 1928.25 2380.79 2510.17 2186.14 2510.17" data-cable-id="GPIO-10" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bu" x="1987.98" y="2471.35" width="475.31" height="77.74" rx="21.95" ry="21.95" transform="translate(-284.58 4735.85) rotate(-90)" />
+        <g>
+          <polygon class="bm" points="2208.71 2535.8 2215.31 2535.8 2215.31 2529.2 2242.64 2529.2 2242.64 2521.58 2208.71 2521.58 2208.71 2535.8" />
+          <path class="bm" d="M2215.92,2513.17c2.51,1.08,5.31,1.63,8.41,1.63h2.7c2.2,0,4.3-.28,6.3-.84,2-.56,3.76-1.44,5.3-2.65,1.53-1.21,2.74-2.77,3.63-4.69.88-1.92,1.32-4.23,1.32-6.92s-.44-5-1.32-6.9c-.88-1.91-2.09-3.46-3.63-4.65-1.53-1.19-3.3-2.08-5.3-2.65-2-.57-4.1-.86-6.3-.86h-2.7c-3.1,0-5.9.54-8.41,1.63-2.51,1.08-4.51,2.74-6,4.95-1.49,2.22-2.23,5.04-2.23,8.48s.74,6.27,2.23,8.51c1.49,2.23,3.49,3.89,6,4.97ZM2217.31,2494.16c1.7-1.24,4.51-1.86,8.41-1.86,3.69,0,6.41.6,8.16,1.81,1.75,1.21,2.63,3.07,2.63,5.58s-.88,4.42-2.65,5.65c-1.77,1.22-4.51,1.84-8.23,1.84s-6.62-.62-8.32-1.86c-1.7-1.24-2.56-3.11-2.56-5.62s.85-4.29,2.56-5.53Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+  <text class="bx" transform="translate(54.3 329.37)"><tspan x="0" y="0">PIN</tspan><tspan class="cr" x="534.49" y="0">E</tspan><tspan x="709.98" y="0">S </tspan><tspan class="cq" x="0" y="355.73">E</tspan><tspan x="175.49" y="355.73">SP32</tspan><tspan class="ca" x="934.68" y="355.73">-</tspan><tspan x="1076.98" y="355.73">S3</tspan></text>
+  <g>
+    <line id="ap" data-name="GPIO-SPK+" class="bg interactive-edge" x1="1894.21" y1="1684.87" x2="1894.21" y2="1560.87" data-cable-id="GPIO-SPK+" style="pointer-events: stroke; cursor: pointer;" />
+    <line id="ap" data-name="GPIO-SPK+" class="interactive-edge-hit" x1="1894.21" y1="1684.87" x2="1894.21" y2="1560.87" data-cable-id="GPIO-SPK+" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+      <g id="Speaker" class="interactive-node"><rect x="1656.15" y="1680.01" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+      <text class="bl" transform="translate(1759.25 1938.25)"><tspan x="0" y="0">SPEAKER</tspan></text>
+    </g></g>
+    <rect id="aq" data-name="Rectangle-SPK+" class="bn interactive-edge" x="1656.69" y="1582.8" width="475.31" height="77.74" rx="21.95" ry="21.95" data-cable-id="GPIO-SPK+" style="pointer-events: fill; cursor: pointer;" />
+    <g>
+      <path class="bm" d="M1859.31,1622.28c-1.89-.85-4.08-1.39-6.55-1.6l-2.6-.23c-1.55-.12-2.67-.54-3.35-1.25-.68-.71-1.02-1.53-1.02-2.46,0-.77.19-1.48.56-2.12.37-.63.94-1.13,1.7-1.49.76-.36,1.7-.53,2.81-.53,1.18,0,2.16.21,2.95.63.79.42,1.39.98,1.79,1.67s.6,1.46.6,2.3h7.44c0-2.2-.51-4.13-1.53-5.79-1.02-1.66-2.49-2.95-4.39-3.88s-4.19-1.39-6.86-1.39-4.74.43-6.6,1.28c-1.86.85-3.31,2.07-4.35,3.65s-1.56,3.47-1.56,5.67c0,3.01,1.01,5.41,3.02,7.23,2.01,1.81,4.71,2.87,8.09,3.18l2.56.19c2.08.19,3.58.6,4.51,1.23.93.64,1.39,1.5,1.39,2.58,0,.87-.25,1.63-.74,2.3-.5.67-1.22,1.19-2.18,1.56-.96.37-2.15.56-3.58.56-1.58,0-2.87-.22-3.86-.67-.99-.45-1.73-1.05-2.21-1.79-.48-.74-.72-1.55-.72-2.42h-7.44c0,2.2.55,4.14,1.65,5.83,1.1,1.69,2.7,3.03,4.81,4.02,2.11.99,4.69,1.49,7.76,1.49,2.88,0,5.36-.45,7.44-1.35,2.08-.9,3.68-2.17,4.81-3.81,1.13-1.64,1.7-3.55,1.7-5.72s-.53-3.9-1.6-5.37c-1.07-1.47-2.55-2.63-4.44-3.49Z" />
+      <path class="bm" d="M1890.38,1608.31c-2.06-.96-4.53-1.44-7.41-1.44h-12.41v34.21h7.62v-9.71h4.79c2.88,0,5.35-.48,7.41-1.44,2.06-.96,3.64-2.33,4.74-4.11,1.1-1.78,1.65-3.88,1.65-6.3v-.74c0-2.45-.55-4.56-1.65-6.34-1.1-1.78-2.68-3.15-4.74-4.11ZM1888.34,1622.09c-.45.85-1.1,1.51-1.95,1.98-.85.46-1.87.7-3.04.7h-5.16v-11.29h5.16c1.18,0,2.19.23,3.04.7.85.46,1.5,1.12,1.95,1.98.45.85.67,1.85.67,3s-.23,2.1-.67,2.95Z" />
+      <polygon class="bm" points="1930.43 1607.15 1921.69 1607.15 1909.18 1623.04 1909.18 1607.15 1901.56 1607.15 1901.56 1641.08 1909.18 1641.08 1909.18 1625.23 1912.16 1625.23 1923.83 1641.08 1933.08 1641.08 1918.85 1621.83 1930.43 1607.15" />
+      <polygon class="bm" points="1958.13 1622.07 1949.85 1622.07 1949.85 1613.38 1943.25 1613.38 1943.25 1622.07 1934.98 1622.07 1934.98 1628.11 1943.25 1628.11 1943.25 1636.8 1949.85 1636.8 1949.85 1628.11 1958.13 1628.11 1958.13 1622.07" />
+    </g>
+    <g>
+      <polyline id="ar" data-name="GPIO-46" class="bh interactive-edge" points="3091.55 1482.18 2739.49 1167.56 2187.09 1167.56" data-cable-id="GPIO-46" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ar" data-name="GPIO-46" class="interactive-edge-hit" points="3091.55 1482.18 2739.49 1167.56 2187.09 1167.56" data-cable-id="GPIO-46" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="as" data-name="GPIO-45" class="bd interactive-edge" points="3028.9 1514.84 2715.21 1233.71 2187.09 1233.71" data-cable-id="GPIO-45" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="as" data-name="GPIO-45" class="interactive-edge-hit" points="3028.9 1514.84 2715.21 1233.71 2187.09 1233.71" data-cable-id="GPIO-45" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="at" data-name="GPIO-16" class="bd interactive-edge" points="2988.36 1572.68 2676.36 1297.35 2187.09 1296.17" data-cable-id="GPIO-16" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="at" data-name="GPIO-16" class="interactive-edge-hit" points="2988.36 1572.68 2676.36 1297.35 2187.09 1296.17" data-cable-id="GPIO-16" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="au" data-name="GPIO-15" class="bh interactive-edge" points="2978.28 1642.78 2640.75 1359.49 2187.09 1359.49" data-cable-id="GPIO-15" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="au" data-name="GPIO-15" class="interactive-edge-hit" points="2978.28 1642.78 2640.75 1359.49 2187.09 1359.49" data-cable-id="GPIO-15" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="av" data-name="GPIO-14" class="bh interactive-edge" points="2978.28 1714.14 2606.76 1427.95 2187.09 1427.95" data-cable-id="GPIO-14" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="av" data-name="GPIO-14" class="interactive-edge-hit" points="2978.28 1714.14 2606.76 1427.95 2187.09 1427.95" data-cable-id="GPIO-14" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="aw" data-name="GPIO-9" class="bd interactive-edge" points="2187.09 1477.95 2559.82 1477.95 2978.28 1785.52" data-cable-id="GPIO-9" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="aw" data-name="GPIO-9" class="interactive-edge-hit" points="2187.09 1477.95 2559.82 1477.95 2978.28 1785.52" data-cable-id="GPIO-9" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><polyline id="ax" data-name="GPIO-8" class="bd interactive-edge" points="2978.28 1856.87 2524.9 1520.56 2187.09 1520.56" data-cable-id="GPIO-8" style="pointer-events: stroke; cursor: pointer;" />
+      <polyline id="ax" data-name="GPIO-8" class="interactive-edge-hit" points="2978.28 1856.87 2524.9 1520.56 2187.09 1520.56" data-cable-id="GPIO-8" style="stroke: transparent; stroke-width: 30px; fill: none; pointer-events: stroke; cursor: pointer;" /><g>
+        <rect class="bu" x="1987.98" y="1286.29" width="475.31" height="77.74" rx="21.95" ry="21.95" transform="translate(900.47 3550.79) rotate(-90)" />
+        <g>
+          <path class="bm" d="M2237.75,1521.35c-1.42-1.04-3.14-1.56-5.16-1.56-1.34,0-2.51.21-3.52.64-1.01.43-1.87,1.04-2.58,1.84s-1.25,1.72-1.62,2.77h-.6c-.34-.83-.8-1.56-1.39-2.22-.58-.65-1.3-1.16-2.16-1.51-.85-.36-1.85-.53-2.99-.53-1.93,0-3.53.5-4.78,1.49-1.25,1-2.2,2.36-2.84,4.1-.64,1.74-.96,3.71-.96,5.93s.32,4.13.96,5.89c.64,1.76,1.59,3.14,2.84,4.14,1.25,1,2.85,1.49,4.78,1.49,1.14,0,2.13-.18,2.99-.55.85-.37,1.57-.88,2.16-1.54.58-.65,1.05-1.38,1.39-2.18h.6c.37,1.05.91,1.97,1.62,2.75s1.57,1.39,2.58,1.81c1.01.43,2.18.64,3.52.64,2.02,0,3.74-.52,5.16-1.56,1.42-1.04,2.5-2.49,3.24-4.35.74-1.86,1.11-4.05,1.11-6.55s-.37-4.73-1.11-6.59c-.74-1.86-1.82-3.31-3.24-4.35ZM2221.09,1535.78c-.61.87-1.49,1.3-2.62,1.3s-2.05-.43-2.65-1.28c-.6-.85-.9-2.02-.9-3.5s.29-2.65.87-3.5c.58-.85,1.47-1.28,2.67-1.28s2.01.43,2.62,1.28c.61.85.92,2.02.92,3.5s-.31,2.61-.92,3.48ZM2235.83,1535.31c-.34.87-.86,1.53-1.56,1.98-.7.46-1.54.68-2.54.68s-1.83-.23-2.5-.68c-.67-.45-1.17-1.12-1.51-1.98-.34-.87-.51-1.87-.51-3.01s.17-2.18.51-3.05c.34-.87.85-1.53,1.51-1.98.67-.45,1.5-.68,2.5-.68s1.84.23,2.54.7c.7.47,1.22,1.13,1.56,1.98.34.85.51,1.86.51,3.03s-.17,2.14-.51,3.01Z" />
+          <rect class="bm" x="2226.1" y="1498.2" width="6.1" height="18.01" />
+          <path class="bm" d="M2214.47,1493.21c1.69,1.02,3.66,1.54,5.91,1.54s3.98-.43,5.55-1.28c1.56-.85,2.78-2.08,3.65-3.67.87-1.59,1.3-3.48,1.3-5.68,0-1.93-.36-3.64-1.07-5.12-.64-1.33-1.58-2.38-2.81-3.19,1.57.1,2.93.35,4.07.76,1.49.54,2.62,1.47,3.37,2.77.75,1.31,1.13,3.1,1.13,5.38,0,1.14-.03,2.25-.09,3.33-.06,1.08-.14,2.09-.26,3.03h5.89c.11-.97.2-1.96.26-2.99.06-1.02.09-2.06.09-3.12,0-5.18-1.32-9.08-3.95-11.71-2.63-2.63-6.54-3.95-11.71-3.95h-1.79c-2.05,0-3.98.24-5.78.72-1.81.48-3.39,1.25-4.76,2.3s-2.43,2.4-3.2,4.05c-.77,1.65-1.15,3.63-1.15,5.93,0,2.5.47,4.69,1.41,6.55.94,1.86,2.26,3.31,3.95,4.33ZM2215.65,1478.87c.46-.88,1.08-1.54,1.88-1.98.8-.44,1.71-.66,2.73-.66,1.19,0,2.18.27,2.94.81.77.54,1.35,1.27,1.75,2.2.4.92.6,1.94.6,3.05,0,1.2-.22,2.22-.66,3.07-.44.85-1.05,1.51-1.84,1.96-.78.46-1.71.68-2.79.68s-1.97-.23-2.75-.7c-.78-.47-1.4-1.14-1.86-2.01-.45-.87-.68-1.93-.68-3.18s.23-2.36.68-3.24Z" />
+          <rect class="bm" x="2226.1" y="1447.17" width="6.1" height="18.01" />
+          <polygon class="bm" points="2241.21 1430.82 2210.06 1430.82 2210.06 1443.88 2216.12 1443.88 2216.12 1437.82 2241.21 1437.82 2241.21 1430.82" />
+          <polygon class="bm" points="2235.23 1425.61 2235.23 1409.31 2241.21 1409.31 2241.21 1402.83 2235.23 1402.83 2235.23 1399.24 2229.69 1399.24 2229.69 1402.83 2218.76 1402.83 2218.76 1409.31 2229.69 1409.31 2229.69 1417.89 2228.79 1418.49 2212.7 1408.37 2209.16 1413.79 2227.94 1425.61 2235.23 1425.61" />
+          <rect class="bm" x="2226.1" y="1378.5" width="6.1" height="18.01" />
+          <polygon class="bm" points="2210.06 1375.22 2216.12 1375.22 2216.12 1369.16 2241.21 1369.16 2241.21 1362.16 2210.06 1362.16 2210.06 1375.22" />
+          <path class="bm" d="M2210.06,1353.92l17.58,1.58v-6.57c-.65-.4-1.19-1.01-1.6-1.83-.41-.83-.62-1.75-.62-2.77,0-1.11.23-2.05.7-2.82s1.11-1.36,1.92-1.77c.81-.41,1.74-.62,2.8-.62s1.94.21,2.75.62c.81.41,1.45,1.01,1.92,1.79.47.78.7,1.74.7,2.88,0,1.02-.21,1.93-.62,2.73-.41.8-.98,1.42-1.71,1.86-.73.44-1.57.66-2.54.66v6.79c1.99,0,3.79-.48,5.4-1.45,1.61-.97,2.9-2.35,3.86-4.14.97-1.79,1.45-3.93,1.45-6.4s-.52-4.79-1.56-6.59c-1.04-1.81-2.38-3.18-4.03-4.12-1.65-.94-3.43-1.41-5.33-1.41h-.55c-1.91,0-3.63.43-5.18,1.3-1.55.87-2.79,2.11-3.71,3.71-.92,1.61-1.39,3.55-1.39,5.83,0,1.96.35,3.55,1.05,4.76.26.45.55.87.86,1.27l-6.13-.57v-13.61h-6.02v18.91Z" />
+          <rect class="bm" x="2226.1" y="1311.04" width="6.1" height="18.01" />
+          <polygon class="bm" points="2241.21 1294.69 2210.06 1294.69 2210.06 1307.75 2216.12 1307.75 2216.12 1301.69 2241.21 1301.69 2241.21 1294.69" />
+          <path class="bm" d="M2236.79,1264.69c-1.69-1.02-3.66-1.54-5.91-1.54s-3.98.43-5.55,1.28c-1.56.85-2.78,2.08-3.65,3.67-.87,1.59-1.3,3.49-1.3,5.68,0,1.94.36,3.64,1.07,5.12.64,1.33,1.59,2.38,2.81,3.19-1.57-.1-2.93-.35-4.07-.76-1.49-.54-2.62-1.46-3.37-2.77-.75-1.31-1.13-3.1-1.13-5.38,0-1.14.03-2.25.09-3.33.06-1.08.14-2.09.26-3.03h-5.89c-.11.97-.2,1.96-.26,2.99-.06,1.02-.09,2.06-.09,3.12,0,5.18,1.32,9.08,3.95,11.71,2.63,2.63,6.54,3.95,11.71,3.95h1.79c2.05,0,3.98-.24,5.78-.73,1.81-.48,3.39-1.25,4.76-2.3,1.37-1.05,2.43-2.4,3.2-4.05.77-1.65,1.15-3.63,1.15-5.93,0-2.5-.47-4.69-1.41-6.55-.94-1.86-2.25-3.31-3.95-4.33ZM2235.62,1279.03c-.46.88-1.08,1.54-1.88,1.98-.8.44-1.71.66-2.73.66-1.19,0-2.18-.27-2.94-.81-.77-.54-1.35-1.27-1.75-2.2-.4-.92-.6-1.94-.6-3.05,0-1.2.22-2.22.66-3.07.44-.85,1.05-1.51,1.83-1.96.78-.45,1.71-.68,2.8-.68s1.97.23,2.75.7c.78.47,1.4,1.14,1.86,2.01.46.87.68,1.93.68,3.18s-.23,2.36-.68,3.24Z" />
+          <rect class="bm" x="2226.1" y="1241.73" width="6.1" height="18.01" />
+          <polygon class="bm" points="2235.23 1238.45 2235.23 1222.15 2241.21 1222.15 2241.21 1215.66 2235.23 1215.66 2235.23 1212.08 2229.69 1212.08 2229.69 1215.66 2218.76 1215.66 2218.76 1222.15 2229.69 1222.15 2229.69 1230.72 2228.79 1231.32 2212.7 1221.21 2209.16 1226.63 2227.94 1238.45 2235.23 1238.45" />
+          <path class="bm" d="M2233.89,1201.81c-.73.44-1.57.66-2.54.66v6.79c1.99,0,3.79-.48,5.4-1.45,1.61-.97,2.9-2.35,3.86-4.14.97-1.79,1.45-3.93,1.45-6.4s-.52-4.79-1.56-6.59c-1.04-1.81-2.38-3.18-4.03-4.12-1.65-.94-3.43-1.41-5.33-1.41h-.55c-1.91,0-3.63.43-5.18,1.3-1.55.87-2.79,2.11-3.71,3.71-.92,1.61-1.39,3.55-1.39,5.83,0,1.96.35,3.55,1.05,4.76.26.45.55.87.86,1.27l-6.13-.57v-13.61h-6.02v18.91l17.58,1.58v-6.57c-.65-.4-1.19-1.01-1.6-1.83-.41-.83-.62-1.75-.62-2.77,0-1.11.23-2.05.7-2.82s1.11-1.36,1.92-1.77c.81-.41,1.74-.62,2.8-.62s1.94.21,2.75.62c.81.41,1.45,1.01,1.92,1.79.47.78.7,1.74.7,2.88,0,1.02-.21,1.93-.62,2.73-.41.8-.98,1.42-1.71,1.86Z" />
+          <rect class="bm" x="2226.1" y="1163.85" width="6.1" height="18.01" />
+          <polygon class="bm" points="2235.23 1160.57 2235.23 1144.27 2241.21 1144.27 2241.21 1137.78 2235.23 1137.78 2235.23 1134.2 2229.69 1134.2 2229.69 1137.78 2218.76 1137.78 2218.76 1144.27 2229.69 1144.27 2229.69 1152.84 2228.79 1153.44 2212.7 1143.33 2209.16 1148.75 2227.94 1160.57 2235.23 1160.57" />
+          <path class="bm" d="M2225.46,1131h1.79c2.05,0,3.98-.24,5.78-.73,1.81-.48,3.39-1.25,4.76-2.3,1.37-1.05,2.43-2.4,3.2-4.05.77-1.65,1.15-3.63,1.15-5.93,0-2.5-.47-4.69-1.41-6.55-.94-1.86-2.25-3.31-3.95-4.33-1.69-1.02-3.66-1.54-5.91-1.54s-3.98.43-5.55,1.28c-1.56.85-2.78,2.08-3.65,3.67-.87,1.59-1.3,3.49-1.3,5.68,0,1.94.36,3.64,1.07,5.12.64,1.33,1.59,2.38,2.81,3.19-1.57-.1-2.93-.35-4.07-.76-1.49-.54-2.62-1.46-3.37-2.77-.75-1.31-1.13-3.1-1.13-5.38,0-1.14.03-2.25.09-3.33.06-1.08.14-2.09.26-3.03h-5.89c-.11.97-.2,1.96-.26,2.99-.06,1.02-.09,2.06-.09,3.12,0,5.18,1.32,9.08,3.95,11.71,2.63,2.63,6.54,3.95,11.71,3.95ZM2226.38,1114.95c.44-.85,1.05-1.51,1.83-1.96.78-.45,1.71-.68,2.8-.68s1.97.23,2.75.7c.78.47,1.4,1.14,1.86,2.01.46.87.68,1.93.68,3.18s-.23,2.36-.68,3.24c-.46.88-1.08,1.54-1.88,1.98-.8.44-1.71.66-2.73.66-1.19,0-2.18-.27-2.94-.81-.77-.54-1.35-1.27-1.75-2.2-.4-.92-.6-1.94-.6-3.05,0-1.2.22-2.22.66-3.07Z" />
+        </g>
+      </g>
+    </g>
+  <g id="AudioCodec" class="interactive-node"><rect x="1656.15" y="1087.51" width="475.31" height="475.31" rx="114.67" ry="114.67" />
+    <text class="bl" transform="translate(1797.92 1312)"><tspan class="cl" x="0" y="0">E</tspan><tspan x="33.12" y="0">S8311</tspan><tspan class="cc" x="-54.47" y="67.49">A</tspan><tspan class="bv" x="-12.01" y="67.49">UDIO I2S</tspan></text>
+    </g></g>
+</svg>
+    </div>
+    <div id="info-panel" class="closed">
+        <div id="toggle-btn">◀ INFO</div>
+        <div class="panel-header">
+            <h1>Diagrama de Pines</h1>
+            <p>Análisis Técnico del Sistema</p>
+        </div>
+        <div class="panel-content" id="info-box">
+            <p style="color: var(--accent);"><br><br>👆 <b>Selecciona un componente o cable</b> en el diagrama para ver su información aquí.</p>
+        </div>
+    </div>
+    <script>
+        function makeSVGURI(svgString) { return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString); }
+        
+        const svgs = {
+            // AHORA EL ESP32 ES UN CIRCULO PERFECTO PARA EVITAR SUPERPOSICIONES EN ESQUINAS
+            esp32: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">
+                    <circle cx="120" cy="120" r="118" fill="#0d0d0d" stroke="#111" stroke-width="2"/>
+                    <path d="M 36 36 A 118 118 0 0 1 204 36 L 204 80 L 36 80 Z" fill="#151515"/>
+                    <circle cx="120" cy="120" r="95" fill="none" stroke="#c0392b" stroke-width="3" stroke-dasharray="10,10"/>
+                    <circle cx="120" cy="120" r="70" fill="#142b20" stroke="#1e4a36" stroke-width="4"/>
+                    <text x="120" y="115" font-family="monospace, Arial" font-size="18" font-weight="bold" fill="#ffffff" text-anchor="middle">ESP32-S3</text>
+                    <text x="120" y="135" font-family="monospace, Arial" font-size="10" fill="#aab7b8" text-anchor="middle">Dual-Core • Wi-Fi</text>
+                    <text x="120" y="150" font-family="monospace, Arial" font-size="10" fill="#aab7b8" text-anchor="middle">8MB PSRAM • 16MB</text>
+                </svg>
+            `),
+            tft: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="120" height="150">
+                    <rect x="0" y="0" width="120" height="150" rx="8" fill="#a93226" stroke="#7b241c" stroke-width="2"/>
+                    <circle cx="15" cy="15" r="4" fill="#641e16"/><circle cx="105" cy="15" r="4" fill="#641e16"/>
+                    <circle cx="15" cy="135" r="4" fill="#641e16"/><circle cx="105" cy="135" r="4" fill="#641e16"/>
+                    <circle cx="60" cy="75" r="50" fill="#111" stroke="#2c3e50" stroke-width="5"/>
+                    <circle cx="60" cy="75" r="45" fill="#1a252f"/>
+                    <path d="M 20 35 Q 60 15 100 35 A 40 40 0 0 1 20 35 Z" fill="rgba(255,255,255,0.1)"/>
+                    <text x="60" y="80" font-family="Arial" font-size="12" fill="#3498db" font-weight="bold" text-anchor="middle">1.28" TFT</text>
+                    <text x="60" y="142" font-family="Arial" font-size="10" fill="#f9ebea" text-anchor="middle">GC9A01</text>
+                </svg>
+            `),
+            touch: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="100" height="130">
+                    <rect x="0" y="0" width="100" height="130" rx="8" fill="#117864" stroke="#0b5345" stroke-width="2"/>
+                    <circle cx="10" cy="10" r="4" fill="#0b5345"/><circle cx="90" cy="10" r="4" fill="#0b5345"/>
+                    <circle cx="10" cy="120" r="4" fill="#0b5345"/><circle cx="90" cy="120" r="4" fill="#0b5345"/>
+                    <circle cx="50" cy="65" r="30" fill="none" stroke="#76d7c4" stroke-width="3" stroke-dasharray="6,6"/>
+                    <circle cx="50" cy="65" r="12" fill="#48c9b0"/>
+                    <path d="M 50 65 L 65 90 L 50 100 Z" fill="#fdfefe"/>
+                    <text x="50" y="120" font-family="Arial" font-size="10" fill="#e8f8f5" font-weight="bold" text-anchor="middle">CST816</text>
+                </svg>
+            `),
+            sd: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="100" height="130">
+                    <rect x="0" y="0" width="100" height="130" rx="8" fill="#229954" stroke="#145a32" stroke-width="2"/>
+                    <rect x="10" y="20" width="80" height="75" rx="3" fill="#bdc3c7" stroke="#7f8c8d" stroke-width="2"/>
+                    <rect x="15" y="25" width="70" height="15" fill="#95a5a6"/>
+                    <path d="M 20 45 L 80 45" stroke="#7f8c8d" stroke-width="2"/>
+                    <text x="50" y="115" font-family="Arial" font-size="12" font-weight="bold" fill="#e9f7ef" text-anchor="middle">MicroSD</text>
+                </svg>
+            `),
+            audio: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+                    <rect x="0" y="0" width="100" height="100" rx="8" fill="#8e44ad" stroke="#5b2c6f" stroke-width="2"/>
+                    <rect x="25" y="25" width="50" height="50" rx="3" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+                    <text x="50" y="45" font-family="Arial" font-size="9" fill="#ccc" text-anchor="middle">ES8311</text>
+                    <text x="50" y="85" font-family="Arial" font-size="11" font-weight="bold" fill="#f4ecf7" text-anchor="middle">AUDIO I2S</text>
+                </svg>
+            `),
+            speaker: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+                    <circle cx="50" cy="50" r="48" fill="#bdc3c7" stroke="#95a5a6" stroke-width="4"/>
+                    <circle cx="50" cy="50" r="38" fill="#2c3e50" stroke="#1a252f" stroke-width="2"/>
+                    <circle cx="50" cy="50" r="15" fill="#111"/>
+                    <circle cx="50" cy="50" r="10" fill="#333"/>
+                </svg>
+            `),
+            mic: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="50" height="70">
+                    <rect x="0" y="0" width="50" height="70" rx="6" fill="#d35400" stroke="#a04000" stroke-width="2"/>
+                    <circle cx="25" cy="25" r="16" fill="#bdc3c7" stroke="#7f8c8d" stroke-width="2"/>
+                    <circle cx="25" cy="25" r="12" fill="#95a5a6" stroke-dasharray="2,2" stroke="#333" stroke-width="1"/>
+                    <circle cx="25" cy="25" r="4" fill="#333"/>
+                    <text x="25" y="60" font-family="Arial" font-size="10" font-weight="bold" fill="#fbeee6" text-anchor="middle">MIC</text>
+                </svg>
+            `),
+            power: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="134" height="74">
+                    <rect x="0" y="0" width="134" height="74" rx="6" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="3"/>
+                    <rect x="5" y="5" width="124" height="64" rx="3" fill="#3498db"/>
+                    <rect x="5" y="5" width="30" height="64" rx="3" fill="#f1c40f"/>
+                    <text x="75" y="35" font-family="Arial" font-size="16" font-weight="bold" fill="#fff" text-anchor="middle">3.7V LiPo</text>
+                    <text x="75" y="55" font-family="Arial" font-size="11" fill="#eaf2f8" text-anchor="middle">400mAh</text>
+                </svg>
+            `),
+            usbc: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="70" height="70">
+                    <rect x="0" y="0" width="70" height="70" rx="6" fill="#1f618d" stroke="#154360" stroke-width="2"/>
+                    <rect x="10" y="10" width="50" height="30" rx="10" fill="#bdc3c7" stroke="#7f8c8d" stroke-width="2"/>
+                    <rect x="20" y="20" width="30" height="8" rx="4" fill="#2c3e50"/>
+                    <text x="35" y="60" font-family="Arial" font-size="12" font-weight="bold" fill="#ecf0f1" text-anchor="middle">USB-C</text>
+                </svg>
+            `),
+            memory: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="90" height="70">
+                    <rect x="0" y="0" width="90" height="70" rx="6" fill="#27ae60" stroke="#1e8449" stroke-width="2"/>
+                    <rect x="10" y="15" width="30" height="30" rx="3" fill="#111" stroke="#333" stroke-width="1"/>
+                    <rect x="50" y="15" width="30" height="30" rx="3" fill="#111" stroke="#333" stroke-width="1"/>
+                    <text x="25" y="32" font-family="Arial" font-size="8" fill="#ccc" text-anchor="middle">FLASH</text>
+                    <text x="65" y="32" font-family="Arial" font-size="8" fill="#ccc" text-anchor="middle">PSRAM</text>
+                    <text x="45" y="60" font-family="Arial" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">MEMORIA</text>
+                </svg>
+            `),
+            debug: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">
+                    <rect x="0" y="0" width="100" height="50" rx="6" fill="#c0392b" stroke="#922b21" stroke-width="2"/>
+                    <rect x="10" y="15" width="80" height="12" fill="#111"/>
+                    ${Array.from({length: 5}).map((_,i) => `<rect x="${15+i*15}" y="10" width="4" height="22" fill="#f1c40f"/>`).join('')}
+                    <text x="50" y="42" font-family="Arial" font-size="10" font-weight="bold" fill="#fff" text-anchor="middle">UART/JTAG</text>
+                </svg>
+            `),
+            system: makeSVGURI(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="80" height="70">
+                    <rect x="0" y="0" width="80" height="70" rx="6" fill="#f39c12" stroke="#d68910" stroke-width="2"/>
+                    <rect x="10" y="15" width="60" height="30" rx="3" fill="#c0392b"/>
+                    ${Array.from({length: 3}).map((_,i) => `<rect x="${18+i*15}" y="20" width="6" height="20" fill="#111"/><rect x="${18+i*15}" y="${i===1?20:30}" width="6" height="10" fill="#ecf0f1"/>`).join('')}
+                    <text x="40" y="62" font-family="Arial" font-size="10" font-weight="bold" fill="#fff" text-anchor="middle">STRAP</text>
+                </svg>
+            `)
+        };
+        
+        const nodesData = [
+            { id: 'ESP32', image: svgs.esp32, info: 'Microcontrolador Principal', desc: 'El cerebro del sistema. Orquesta los periféricos, el procesamiento de señales y la pantalla.' },
+            { id: 'TFT', image: svgs.tft, info: 'Pantalla TFT (GC9A01)', desc: 'Pantalla circular a color para la interfaz visual. Se comunica a alta velocidad por SPI.' },
+            { id: 'Touch', image: svgs.touch, info: 'Cristal Táctil Capacitivo', desc: 'Panel táctil integrado en la pantalla para interactuar mediante gestos.' },
+            { id: 'SD', image: svgs.sd, info: 'Lector de Memoria SD', desc: 'Almacenamiento extraíble para configuraciones, datos y archivos pesados.' },
+            { id: 'AudioCodec', image: svgs.audio, info: 'Códec de Audio I2S', desc: 'Procesa el audio digital I2S y lo convierte a analógico, amplificándolo para el parlante.' },
+            { id: 'Speaker', image: svgs.speaker, info: 'Cono Acústico', desc: 'Parlante magnético donde se reproduce la salida de audio del sistema.' },
+            { id: 'Mic', image: svgs.mic, info: 'Micrófono Digital', desc: 'Micrófono omnidireccional que capta el sonido y lo envía vía I2S al procesador principal.' },
+            { id: 'Power', image: svgs.power, info: 'Batería LiPo', desc: 'Fuente de energía portátil para el funcionamiento autónomo del sistema.' },
+            { id: 'USB_Node', image: svgs.usbc, info: 'Puerto USB-C', desc: 'Conexión universal para carga de batería y paso de datos nativo.' },
+            { id: 'Mem_Node', image: svgs.memory, info: 'Memoria Interna', desc: 'Chip PSRAM/Flash integrado en el módulo para ejecución rápida de código.' },
+            { id: 'Debug_Node', image: svgs.debug, info: 'Depuración UART/JTAG', desc: 'Pines de bajo nivel para flashear firmware o depurar errores con un programador.' },
+            { id: 'System_Node', image: svgs.system, info: 'Pines Strapping', desc: 'Pines sensibles que definen el modo de arranque. Deben manejarse con mucho cuidado.' }
+        ];
+
+        const baseEdgesData = [
+            { label: 'GP2', from: 'ESP32', to: 'TFT', protocol: 'SPI', title: 'MOSI', warning: '', info: 'Datos de imagen enviados velozmente hacia la pantalla TFT.' },
+            { label: 'GP4', from: 'ESP32', to: 'TFT', protocol: 'SPI', title: 'SCK', warning: '', info: 'Reloj de sincronización ultra rápida para la pantalla.' },
+            { label: 'GP5', from: 'ESP32', to: 'TFT', protocol: 'SPI', title: 'CS', warning: '', info: 'Señal de Selección (Chip Select) que habilita la pantalla en el bus SPI.' },
+            { label: 'GP38', from: 'ESP32', to: 'TFT', protocol: 'CTRL', title: 'RST', warning: '', info: 'Pin para forzar el reinicio físico (Hardware Reset) de la pantalla.' },
+            { label: 'GP42', from: 'ESP32', to: 'TFT', protocol: 'CTRL', title: 'BL', warning: '', info: 'Controla el encendido y el nivel de brillo de la retroiluminación (Backlight).' },
+            { label: 'GP47', from: 'ESP32', to: 'TFT', protocol: 'CTRL', title: 'DC', warning: '', info: 'Indica si los bytes transmitidos son Comandos o Datos de color.' },
+            { label: 'GP6', from: 'ESP32', to: 'Touch', protocol: 'I2C', title: 'SDA', warning: '', info: 'Datos del bus I2C que transmiten las coordenadas de las interacciones táctiles.' },
+            { label: 'GP7', from: 'ESP32', to: 'Touch', protocol: 'I2C', title: 'SCL', warning: '', info: 'Reloj del bus I2C para consultar constantemente el sensor táctil.' },
+            { label: 'GP11', from: 'ESP32', to: 'Touch', protocol: 'CTRL', title: 'INT', warning: '', info: 'Alerta instantánea. Interrumpe al procesador principal justo al detectar un toque.' },
+            { label: 'GP12', from: 'ESP32', to: 'Touch', protocol: 'CTRL', title: 'RST', warning: '', info: 'Señal para resetear físicamente el controlador táctil.' },
+            { label: 'GP13', from: 'ESP32', to: 'SD', protocol: 'SPI', title: 'CS', warning: '', info: 'Chip Select que activa la lectura/escritura de la tarjeta SD.' },
+            { label: 'GP17', from: 'ESP32', to: 'SD', protocol: 'SPI', title: 'SCK', warning: '', info: 'Reloj SPI para mover archivos de configuración o datos masivos.' },
+            { label: 'GP18', from: 'ESP32', to: 'SD', protocol: 'SPI', title: 'MOSI', warning: '', info: 'Envía datos desde el procesador para grabarlos en la tarjeta SD.' },
+            { label: 'GP21', from: 'SD', to: 'ESP32', protocol: 'SPI', title: 'MISO', warning: '', info: 'Recibe datos leídos desde la tarjeta SD hacia el procesador.' },
+            { label: 'GP8', from: 'ESP32', to: 'AudioCodec', protocol: 'I2S', title: 'DOUT', warning: '', info: 'Envía el audio digital puro hacia el Códec para su reproducción.' },
+            { label: 'GP9', from: 'ESP32', to: 'AudioCodec', protocol: 'I2S', title: 'BCLK', warning: '', info: 'Bit Clock que marca el ritmo de cada bit de audio transferido.' },
+            { label: 'GP14', from: 'ESP32', to: 'AudioCodec', protocol: 'I2C', title: 'SCL', warning: '', info: 'Reloj I2C usado para ajustar parámetros como volumen y ganancia.' },
+            { label: 'GP15', from: 'ESP32', to: 'AudioCodec', protocol: 'I2C', title: 'SDA', warning: '', info: 'Datos I2C que envían comandos de configuración al Códec.' },
+            { label: 'GP16', from: 'ESP32', to: 'AudioCodec', protocol: 'I2S', title: 'MCLK', warning: '', info: 'Master Clock de altísima frecuencia para mantener la calidad de audio.' },
+            { label: 'GP45', from: 'ESP32', to: 'AudioCodec', protocol: 'I2S', title: 'LRCK', warning: 'Strapping', info: 'Señal Left/Right del audio. ¡Peligro! Es un pin de arranque.' },
+            { label: 'GP46', from: 'ESP32', to: 'AudioCodec', protocol: 'CTRL', title: 'PA_EN', warning: 'Strapping', info: 'Enciende el amplificador. ¡Ojo! Si no se aísla bien, evitará el arranque correcto.' },
+            { label: 'SPK+', from: 'AudioCodec', to: 'Speaker', protocol: 'ANALOG', title: 'SPK+', warning: '', info: 'Onda analógica positiva que empuja físicamente el cono del parlante.' },
+            { label: 'SPK-', from: 'AudioCodec', to: 'Speaker', protocol: 'ANALOG', title: 'SPK-', warning: '', info: 'Onda analógica de referencia (negativa) para el parlante.' },
+            { label: 'GP10', from: 'Mic', to: 'ESP32', protocol: 'I2S', title: 'DIN', warning: '', info: 'El micrófono captura el audio ambiental y lo inyecta digitalmente en el procesador.' },
+            { label: 'VBAT', from: 'Power', to: 'ESP32', protocol: 'PWR', title: 'VBAT', warning: '', info: 'Voltaje proveniente de la batería (aprox 3.7V-4.2V).' },
+            { label: 'GND', from: 'Power', to: 'ESP32', protocol: 'PWR', title: 'GND', warning: '', info: 'Tierra general. Todos los circuitos comparten esta masa (0V).' },
+            { label: 'GP19', from: 'USB_Node', to: 'ESP32', protocol: 'USB', title: 'D-', warning: 'Intocable', info: 'Línea diferencial negativa del bus USB nativo. No soldar otra cosa aquí.' },
+            { label: 'GP20', from: 'USB_Node', to: 'ESP32', protocol: 'USB', title: 'D+', warning: 'Intocable', info: 'Línea diferencial positiva del bus USB nativo. No soldar otra cosa aquí.' },
+            { label: 'GP39', from: 'ESP32', to: 'Debug_Node', protocol: 'JTAG', title: 'MTCK', warning: '', info: 'Pin para depuración y escaneo en placa (Test Clock).' },
+            { label: 'GP40', from: 'ESP32', to: 'Debug_Node', protocol: 'JTAG', title: 'MTDO', warning: '', info: 'Pin para depuración avanzada (Test Data Out).' },
+            { label: 'GP41', from: 'ESP32', to: 'Debug_Node', protocol: 'JTAG', title: 'MTDI', warning: '', info: 'Pin para depuración avanzada (Test Data In).' },
+            { label: 'GP43', from: 'ESP32', to: 'Debug_Node', protocol: 'UART', title: 'TX', warning: '', info: 'Transmite el registro serial (Log) para ver los errores en un monitor serial.' },
+            { label: 'GP44', from: 'Debug_Node', to: 'ESP32', protocol: 'UART', title: 'RX', warning: '', info: 'Recibe comandos seriales desde la consola.' },
+            { label: 'GP0', from: 'System_Node', to: 'ESP32', protocol: 'BOOT', title: 'BOOT', warning: 'Strapping', info: 'Botón BOOT físico. Tíralo a tierra (GND) para forzar el modo flash/programación.' },
+            { label: 'GP1', from: 'System_Node', to: 'ESP32', protocol: 'GPIO', title: 'Libre', warning: '', info: 'Pin de propósito general completamente libre para añadir hardware extra.' },
+            { label: 'GP3', from: 'System_Node', to: 'ESP32', protocol: 'GPIO', title: 'Libre', warning: '', info: 'Normalmente libre, se puede usar para sumar luces o sensores.' },
+            { label: 'GP48', from: 'System_Node', to: 'ESP32', protocol: 'BOOT', title: 'STRAP', warning: 'Strapping', info: 'Si está en bajo (GND) al arrancar, ignora la Flash SPI. ¡No conectar nada aquí!' }
+        ];
+
+        const memoryPins = [26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37];
+        memoryPins.forEach(pin => {
+            baseEdgesData.push({ label: `GP${pin}`, from: 'Mem_Node', to: 'ESP32', protocol: 'BUS', title: 'Memoria Interna', warning: 'Prohibido', info: 'Cables microscópicos internos que conectan al procesador con su memoria Flash/PSRAM. Absolutamente intocables.' });
+        });
+
+
+        const panel = document.getElementById('info-panel');
+        const toggleBtn = document.getElementById('toggle-btn');
+        const svgContainer = document.getElementById('svg-container');
+        
+        let panelOpen = false;
+        function togglePanel() {
+            panelOpen = !panelOpen;
+            if (panelOpen) { 
+                panel.classList.remove('closed'); 
+                svgContainer.classList.add('panel-open');
+                toggleBtn.innerHTML = '▶ CERRAR'; 
+            }
+            else { 
+                panel.classList.add('closed'); 
+                svgContainer.classList.remove('panel-open');
+                toggleBtn.innerHTML = '◀ INFO'; 
+            }
+        }
+        function openPanel() { if(!panelOpen) togglePanel(); }
+        function closePanel() { if(panelOpen) togglePanel(); }
+        toggleBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
+
+        // Cerrar panel al tocar fondo vacio
+        svgContainer.addEventListener('click', (e) => {
+            if (panelOpen) closePanel();
+        });
+        
+        const nodesMap = {};
+        if(typeof nodesData !== 'undefined') {
+            nodesData.forEach(n => nodesMap[n.id] = n);
+        }
+
+        document.querySelectorAll('.interactive-node').forEach(node => {
+            node.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = node.getAttribute('id');
+                const data = nodesMap[id];
+                if (data) {
+                    openPanel();
+                    const infoBox = document.getElementById('info-box');
+                    let svgHtml = data.image ? `<div style="text-align:center; margin: 15px 0; background: #1a1b26; padding: 25px; border-radius: 12px; border: 1px dashed #414868; display: flex; justify-content: center; align-items: center; min-height: 150px; box-shadow: inset 0 0 20px rgba(0,0,0,0.5);"> <img src="${data.image}" style="max-width:100%; max-height:200px; filter: drop-shadow(0 10px 10px rgba(0,0,0,0.3));"> </div>` : '';
+                    let title = data.info ? data.info.replace('<b>','').replace('</b>','') : id;
+                    let desc = data.desc ? `<div class="rich-desc">${data.desc}</div>` : '';
+                    
+                    infoBox.innerHTML = `
+                        <h2 style="font-size: 1.5rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; color: #fff;">${title}</h2>
+                        <div class="badge badge-info">MÓDULO DE HARDWARE</div>
+                        ${svgHtml}
+                        ${desc}
+                    `;
+                }
+            });
+        });
+
+        document.querySelectorAll('.interactive-edge, .interactive-edge-hit').forEach(edge => {
+            edge.addEventListener('mouseenter', () => {
+                const id = edge.getAttribute('data-cable-id');
+                if (id) {
+                    document.querySelectorAll(`[data-cable-id="${id}"]`).forEach(el => {
+                        if (el.classList.contains('interactive-edge')) el.classList.add('hover-active');
+                    });
+                }
+            });
+            edge.addEventListener('mouseleave', () => {
+                const id = edge.getAttribute('data-cable-id');
+                if (id) {
+                    document.querySelectorAll(`[data-cable-id="${id}"]`).forEach(el => {
+                        if (el.classList.contains('interactive-edge')) el.classList.remove('hover-active');
+                    });
+                }
+            });
+            edge.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const rawId = edge.getAttribute('data-cable-id');
+                let searchId = rawId.replace('GPIO-', 'GP');
+                if(rawId === 'GPIO-SPK+') searchId = 'SPK+';
+                if(rawId === 'GPIO-SPK-') searchId = 'SPK-';
+                if(rawId === 'GPIO-GND') searchId = 'GND';
+                if(rawId === 'GPIO-VBAT') searchId = 'VBAT';
+                
+                let edgeData = null;
+                if(typeof baseEdgesData !== 'undefined') {
+                    edgeData = baseEdgesData.find(e => e.label === searchId);
+                }
+
+                openPanel();
+                const infoBox = document.getElementById('info-box');
+                
+                if(edgeData) {
+                    let html = `<h2 style="font-size: 1.5rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; color: #fff;">PIN ${edgeData.label}</h2>`;
+                    html += `<div style="margin-bottom: 15px;">`;
+                    html += `<span class="badge badge-warning">CABLE / PISTA</span>`;
+                    if (edgeData.protocol) html += `<span class="badge badge-info">${edgeData.protocol}</span>`;
+                    if (edgeData.warning) html += `<span class="badge badge-danger">${edgeData.warning}</span>`;
+                    html += `</div>`;
+                    
+                    if(edgeData.info) html += `<div class="rich-desc">${edgeData.info}</div>`;
+                    
+                    html += `<div class="info-prop">`;
+                    if(edgeData.title) html += `Función: <strong>${edgeData.title}</strong><br><br>`;
+                    html += `Origen: <strong>${edgeData.from}</strong><br>Destino: <strong>${edgeData.to}</strong>`;
+                    html += `</div>`;
+                    infoBox.innerHTML = html;
+                } else {
+                    infoBox.innerHTML = `
+                        <h2 style="font-size: 1.5rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; color: #fff;">${rawId.replace('GPIO-', 'PIN ')}</h2>
+                        <div class="badge badge-warning">CABLE / PISTA</div>
+                        <div class="rich-desc">
+                            Conexión de datos genérica detectada para el cable <strong>${rawId}</strong>.
+                        </div>
+                    `;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
